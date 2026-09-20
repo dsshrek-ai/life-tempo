@@ -40,6 +40,11 @@ header.site-header .bar {
   gap: 0.5rem 1rem;
 }
 header.site-header h1 { margin: 0; font-size: 1.5rem; }
+header.site-header nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
 header.site-header nav a {
   color: #fff;
   text-decoration: none;
