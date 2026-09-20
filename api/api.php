@@ -27,6 +27,12 @@
 // same syncBridge() used for Goal<->Activity), a Shared Life flag directly
 // on lt_activity_log, and Learning Projects (linked 1:1 via two nullable
 // columns rather than a separate join table -- see schema.sql for why).
+//
+// Phase 5 (Engagement Scoring and Heat Maps) adds Goal.Weight and
+// computeEngagement(), which scales every active goal's target to whatever
+// period is asked about (week/rolling-4-weeks/month/quarter/year, or a
+// heat map's per-week rows) and produces a transparent weighted score --
+// nothing here is persisted (spec section 129), it's all calculated live.
 
 require_once __DIR__ . '/config.php';
 
@@ -587,7 +593,7 @@ function normEnum(string $v, array $allowed, string $default): string {
 
 function listGoals(int $userId): array {
   $stmt = db()->prepare(
-    'SELECT g.id, g.name, g.goal_type, g.cadence_type, g.target_value, g.active,
+    'SELECT g.id, g.name, g.goal_type, g.cadence_type, g.target_value, g.weight, g.active,
             GROUP_CONCAT(ga.activity_id) AS activity_ids
      FROM lt_goals g
      LEFT JOIN lt_goal_activity ga ON ga.goal_id = g.id
@@ -606,6 +612,7 @@ function listGoals(int $userId): array {
       'GoalType' => (string)$r['goal_type'],
       'CadenceType' => (string)$r['cadence_type'],
       'TargetValue' => $r['target_value'] !== null ? (float)$r['target_value'] : null,
+      'Weight' => (float)$r['weight'],
       'Active' => (bool)$r['active'],
       'ActivityIds' => $r['activity_ids'] ? array_map('intval', explode(',', $r['activity_ids'])) : [],
     ];
@@ -644,17 +651,23 @@ function syncBridge(string $table, string $ownColumn, int $ownId, string $otherC
   $ins->close();
 }
 
+function goalWeight(array $b): float {
+  $w = (isset($b['weight']) && $b['weight'] !== '') ? (float)$b['weight'] : 1.0;
+  return $w > 0 ? $w : 1.0;
+}
+
 function addGoal(int $userId, array $b): int {
   $name = trim((string)($b['name'] ?? ''));
   if ($name === '') { fail('Goal name is required'); }
   $goalType = normEnum((string)($b['goalType'] ?? ''), GOAL_TYPES, 'TrackOnly');
   $cadenceType = normEnum((string)($b['cadenceType'] ?? ''), CADENCE_TYPES, 'Weekly');
   $targetValue = (isset($b['targetValue']) && $b['targetValue'] !== '') ? (float)$b['targetValue'] : null;
+  $weight = goalWeight($b);
   try {
     $stmt = db()->prepare(
-      'INSERT INTO lt_goals (user_id, name, goal_type, cadence_type, target_value) VALUES (?, ?, ?, ?, ?)'
+      'INSERT INTO lt_goals (user_id, name, goal_type, cadence_type, target_value, weight) VALUES (?, ?, ?, ?, ?, ?)'
     );
-    $stmt->bind_param('isssd', $userId, $name, $goalType, $cadenceType, $targetValue);
+    $stmt->bind_param('isssdd', $userId, $name, $goalType, $cadenceType, $targetValue, $weight);
     $stmt->execute();
     $id = $stmt->insert_id;
     $stmt->close();
@@ -671,13 +684,14 @@ function updateGoal(int $userId, int $id, array $b): void {
   $goalType = normEnum((string)($b['goalType'] ?? ''), GOAL_TYPES, 'TrackOnly');
   $cadenceType = normEnum((string)($b['cadenceType'] ?? ''), CADENCE_TYPES, 'Weekly');
   $targetValue = (isset($b['targetValue']) && $b['targetValue'] !== '') ? (float)$b['targetValue'] : null;
+  $weight = goalWeight($b);
   $active = !empty($b['active']) ? 1 : 0;
   try {
     $stmt = db()->prepare(
-      'UPDATE lt_goals SET name = ?, goal_type = ?, cadence_type = ?, target_value = ?, active = ?
+      'UPDATE lt_goals SET name = ?, goal_type = ?, cadence_type = ?, target_value = ?, weight = ?, active = ?
        WHERE id = ? AND user_id = ?'
     );
-    $stmt->bind_param('sssdiii', $name, $goalType, $cadenceType, $targetValue, $active, $id, $userId);
+    $stmt->bind_param('sssddiii', $name, $goalType, $cadenceType, $targetValue, $weight, $active, $id, $userId);
     $stmt->execute();
     $stmt->close();
   } catch (mysqli_sql_exception $e) {
@@ -698,6 +712,25 @@ function monthRange(): array {
   $first = new DateTime('first day of this month');
   $last = new DateTime('last day of this month');
   return [$first->format('Y-m-d'), $last->format('Y-m-d')];
+}
+
+function rolling4WeekRange(): array {
+  $end = new DateTime('today');
+  $start = (clone $end)->modify('-27 days');
+  return [$start->format('Y-m-d'), $end->format('Y-m-d')];
+}
+
+function quarterRange(): array {
+  $today = new DateTime('today');
+  $quarterStartMonth = intdiv((int)$today->format('n') - 1, 3) * 3 + 1;
+  $first = new DateTime($today->format('Y') . '-' . $quarterStartMonth . '-01');
+  $last = (clone $first)->modify('+3 months')->modify('-1 day');
+  return [$first->format('Y-m-d'), $last->format('Y-m-d')];
+}
+
+function yearRange(): array {
+  $year = (new DateTime('today'))->format('Y');
+  return ["$year-01-01", "$year-12-31"];
 }
 
 function applicableDaysInRange(string $start, string $end, int $userId): int {
@@ -770,6 +803,131 @@ function computeGoalProgress(int $userId): array {
     ];
   }
   return $out;
+}
+
+// ---- Phase 5: Engagement Scoring and Heat Maps ----
+//
+// computeGoalProgress() above answers "how am I doing this week/month, per
+// goal, on its own native cadence" (the Dashboard). Engagement answers a
+// different question -- "what's my overall score for ANY period" (a week, a
+// month, a quarter, a year) -- which means every goal's target has to be
+// scaled to whatever period is being asked about, regardless of the goal's
+// own cadence. That's what goalExpectedInPeriod() does.
+
+// Scales a goal's target_value to an arbitrary [$start,$end] period. Daily
+// goals scale exactly (via applicableDaysInRange, so exceptions still
+// apply); Weekly/Monthly goals scale by the ratio of period length to a
+// week/month -- approximate for odd period lengths (a quarter isn't exactly
+// 13 weeks), which is an acceptable trade for a personal app (spec section
+// 147.2: let real usage tell us if finer precision is ever worth it).
+function goalExpectedInPeriod(array $goal, string $start, string $end, int $userId): float {
+  $target = $goal['TargetValue'] ?? 0;
+  if ($target <= 0) { return 0.0; }
+  $days = (int)(new DateTime($start))->diff(new DateTime($end))->days + 1;
+  switch ($goal['CadenceType']) {
+    case 'Daily':
+      return $target * applicableDaysInRange($start, $end, $userId);
+    case 'Monthly':
+      return $target * ($days / 30.44); // 365.25 / 12
+    default: // Weekly
+      return $target * ($days / 7);
+  }
+}
+
+// A goal's contribution to the overall score, always on a 0-100 scale
+// where higher is better -- even for Maximum goals, where "over" declines
+// from 100 rather than climbing past it (spec section 11 rule 1: individual
+// goals cap at 100 so no goal can inflate the overall score by overachieving).
+function goalScorePercent(array $goal, float $actual, float $expected): float {
+  if ($expected <= 0) { return $actual > 0 ? 100.0 : 0.0; }
+  if ($goal['GoalType'] === 'Maximum') {
+    if ($actual <= $expected) { return 100.0; }
+    $overPercent = (($actual - $expected) / $expected) * 100;
+    return max(0.0, 100.0 - $overPercent);
+  }
+  return min(100.0, ($actual / $expected) * 100); // Minimum or Target
+}
+
+// The whole engagement calculation for one period: a weighted average of
+// every active, scoreable goal's ScorePercent, plus the full breakdown so
+// the score is never a black box (spec section 36/147.5 -- the user should
+// always be able to see what was expected, what was completed, and how
+// each goal was weighted). TrackOnly goals are excluded from the score
+// (spec section 136 point 8) but nothing stops them from being tracked --
+// they just don't move the number.
+function computeEngagement(int $userId, string $start, string $end): array {
+  $goals = array_filter(listGoals($userId), fn($g) => $g['Active'] && $g['GoalType'] !== 'TrackOnly');
+  $breakdown = [];
+  $weightedSum = 0.0;
+  $weightTotal = 0.0;
+  foreach ($goals as $g) {
+    $expected = goalExpectedInPeriod($g, $start, $end, $userId);
+    $actual = goalActualCount($userId, $g['ActivityIds'], $start, $end);
+    $score = goalScorePercent($g, $actual, $expected);
+    $weight = $g['Weight'];
+    $weightedSum += $score * $weight;
+    $weightTotal += $weight;
+    $breakdown[] = [
+      'GoalId' => $g['Id'],
+      'Name' => $g['Name'],
+      'GoalType' => $g['GoalType'],
+      'CadenceType' => $g['CadenceType'],
+      'Weight' => $weight,
+      'Actual' => $actual,
+      'Expected' => round($expected, 2),
+      'ScorePercent' => round($score, 1),
+      'HasActivities' => !empty($g['ActivityIds']),
+    ];
+  }
+  return [
+    'PeriodStart' => $start,
+    'PeriodEnd' => $end,
+    'Overall' => $weightTotal > 0 ? round($weightedSum / $weightTotal, 1) : null,
+    'Goals' => $breakdown,
+  ];
+}
+
+// The five period views the spec's Today/Weekly/Monthly/Quarterly reviews
+// call for (sections 32-34), all from the one computeEngagement() function.
+function engagementSummary(int $userId): array {
+  [$wStart, $wEnd] = weekRange();
+  [$r4Start, $r4End] = rolling4WeekRange();
+  [$mStart, $mEnd] = monthRange();
+  [$qStart, $qEnd] = quarterRange();
+  [$yStart, $yEnd] = yearRange();
+  return [
+    'Week' => computeEngagement($userId, $wStart, $wEnd),
+    'Rolling4Weeks' => computeEngagement($userId, $r4Start, $r4End),
+    'Month' => computeEngagement($userId, $mStart, $mEnd),
+    'Quarter' => computeEngagement($userId, $qStart, $qEnd),
+    'Year' => computeEngagement($userId, $yStart, $yEnd),
+  ];
+}
+
+// The heat map: one row per week for the last $weeks weeks, each with the
+// overall score plus every goal's own score that week -- reveals patterns a
+// single current-period number can't (spec section 12).
+function engagementHeatmap(int $userId, int $weeks): array {
+  $today = new DateTime('today');
+  $dow = (int)$today->format('N');
+  $thisWeekStart = (clone $today)->modify('-' . ($dow - 1) . ' days');
+  $rows = [];
+  for ($i = $weeks - 1; $i >= 0; $i--) {
+    $start = (clone $thisWeekStart)->modify('-' . ($i * 7) . ' days');
+    $end = (clone $start)->modify('+6 days');
+    $eng = computeEngagement($userId, $start->format('Y-m-d'), $end->format('Y-m-d'));
+    $rows[] = [
+      'WeekStart' => $eng['PeriodStart'],
+      'WeekEnd' => $eng['PeriodEnd'],
+      'Overall' => $eng['Overall'],
+      'Goals' => array_map(fn($g) => [
+        'GoalId' => $g['GoalId'],
+        'Name' => $g['Name'],
+        'ScorePercent' => $g['ScorePercent'],
+      ], $eng['Goals']),
+    ];
+  }
+  return $rows;
 }
 
 function getDayStatus(int $userId, string $date): array {
@@ -1245,6 +1403,20 @@ switch ($action) {
   case 'sharedLifeSummary': {
     $user = requireMember();
     respond(['ok' => true] + sharedLifeSummary((int)$user['id']));
+  }
+
+  // -- Phase 5: Engagement Scoring and Heat Maps --
+
+  case 'engagementSummary': {
+    $user = requireMember();
+    respond(['ok' => true, 'summary' => engagementSummary((int)$user['id'])]);
+  }
+
+  case 'engagementHeatmap': {
+    $user = requireMember();
+    $weeks = isset($_GET['weeks']) ? (int)$_GET['weeks'] : 8;
+    $weeks = max(4, min(26, $weeks));
+    respond(['ok' => true, 'weeks' => engagementHeatmap((int)$user['id'], $weeks)]);
   }
 
   default:

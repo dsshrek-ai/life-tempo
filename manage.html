@@ -15,6 +15,7 @@
       <a href="index.html">Today</a>
       <a href="history.html">History</a>
       <a href="dashboard.html">Dashboard</a>
+      <a href="engagement.html">Engagement</a>
       <a href="manage.html" aria-current="page">Manage</a>
     </nav>
   </div>
@@ -25,7 +26,7 @@
   <div id="content"><p class="note">Loading…</p></div>
 </main>
 
-<footer class="site-footer">Life Tempo — Phase 4: People, Shared Life, and Learning</footer>
+<footer class="site-footer">Life Tempo — Phase 5: Engagement Scoring and Heat Maps</footer>
 
 <script src="js/api.js"></script>
 <script>
@@ -258,6 +259,7 @@ function renderGoals() {
       <td>${plainSelect('goalType', GOAL_TYPE_OPTS, g.GoalType)}</td>
       <td>${plainSelect('cadenceType', CADENCE_TYPE_OPTS, g.CadenceType)}</td>
       <td>${txt('targetValue', g.TargetValue, { type: 'number', attrs: 'step="0.5" min="0"' })}</td>
+      <td>${txt('weight', g.Weight, { type: 'number', attrs: 'step="0.1" min="0.1"' })}</td>
       <td>${multiSelectOptions('activityIds', activeActivities, 'Id', 'Name', g.ActivityIds)}</td>
       <td>${chk('active', g.Active)}</td>
       <td><button class="btn" data-act="save-goal">Save</button></td>
@@ -268,6 +270,7 @@ function renderGoals() {
       <td>${plainSelect('goalType', GOAL_TYPE_OPTS, 'Target')}</td>
       <td>${plainSelect('cadenceType', CADENCE_TYPE_OPTS, 'Weekly')}</td>
       <td>${txt('targetValue', '', { type: 'number', attrs: 'step="0.5" min="0"' })}</td>
+      <td>${txt('weight', 1, { type: 'number', attrs: 'step="0.1" min="0.1"' })}</td>
       <td>${multiSelectOptions('activityIds', activeActivities, 'Id', 'Name', [])}</td>
       <td>${chk('active', true)}</td>
       <td><button class="btn" data-act="add-goal">Add</button></td>
@@ -276,7 +279,7 @@ function renderGoals() {
     <div class="table-wrap">
       <table class="grid">
         <thead><tr>
-          <th>Name</th><th>Type</th><th>Cadence</th><th>Target</th><th>Counts activities</th><th>Active</th><th>Actions</th>
+          <th>Name</th><th>Type</th><th>Cadence</th><th>Target</th><th>Weight</th><th>Counts activities</th><th>Active</th><th>Actions</th>
         </tr></thead>
         <tbody>${rows}${addRow}</tbody>
       </table>
@@ -294,6 +297,7 @@ async function handleGoalAction(btn) {
     goalType: data.goalType,
     cadenceType: data.cadenceType,
     targetValue: data.targetValue,
+    weight: data.weight,
     activityIds: data.activityIds,
     active: data.active,
   };

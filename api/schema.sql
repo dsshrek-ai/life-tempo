@@ -252,6 +252,17 @@ ALTER TABLE lt_activity_log
   ADD KEY ix_lt_activity_log_learning (user_id, learning_project_id, activity_date),
   ADD FOREIGN KEY (learning_project_id) REFERENCES lt_learning_projects(id) ON DELETE SET NULL;
 
+-- ---------- PHASE 5: Engagement Scoring and Heat Maps ----------
+-- Goal weighting (spec section 9/52) is the only schema change -- everything
+-- else (engagement percent, the week/rolling-4/month/quarter/year summary,
+-- and the heat map) is calculated live from lt_goals + lt_activity_log, not
+-- persisted (spec section 129 explicitly says skip EngagementSnapshot for
+-- the MVP unless live calculation proves too slow -- it won't, at this
+-- table size). Run once.
+
+ALTER TABLE lt_goals
+  ADD COLUMN weight DECIMAL(6,3) NOT NULL DEFAULT 1.000 AFTER target_value;
+
 -- ============================================================
 -- BOOTSTRAP (run once, after you've signed up through My Apps Hub):
 --
@@ -272,4 +283,8 @@ ALTER TABLE lt_activity_log
 -- 5) On Manage's People/Tags/Learning Projects sections, add a few, then
 --    use them from the Today/History log form (participants, shared life,
 --    tags, learning project + mode).
+--
+-- 6) Check Engagement for the overall score (Week/Rolling 4 Weeks/Month/
+--    Quarter/Year) and the weekly heat map. Set a goal's Weight above 1 to
+--    make it count more toward the overall score, below 1 to count less.
 -- ============================================================

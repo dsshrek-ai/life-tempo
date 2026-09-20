@@ -127,3 +127,21 @@ Learn/Apply tracking on the log form.
    was with you, mark itself Shared Life, carry tags, and optionally link a
    Learning Project with a Learn/Apply mode.
 5. Check **Dashboard** for the new Shared Life count.
+
+## Phase 5 update
+
+Phase 5 adds goal weighting and the Engagement page (overall score +
+weekly heat map).
+
+1. In phpMyAdmin, run `api/schema.sql` again. It adds one plain `ALTER
+   TABLE lt_goals ADD COLUMN weight ...` — **not idempotent**, skip it if
+   you already ran this Phase 5 block once.
+2. Re-upload `api/api.php`.
+3. Push/pull the updated front end (`engagement.html` is new).
+4. On **Manage → Goals**, every goal now has a Weight column (default 1) —
+   raise it for goals that matter more, lower it for goals that matter less
+   to the overall score.
+5. Check **Engagement** for the This Week/Rolling 4 Weeks/This Month/This
+   Quarter/This Year scores, each with a Breakdown, and the weekly heat map.
+   Scores need at least one active goal (not TrackOnly) linked to at least
+   one activity to show anything other than "No data."

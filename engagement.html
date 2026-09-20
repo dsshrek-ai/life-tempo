@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Engagement | Life Tempo</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="bar">
+    <h1>🧭 Life Tempo</h1>
+    <nav>
+      <a href="index.html">Today</a>
+      <a href="history.html">History</a>
+      <a href="dashboard.html">Dashboard</a>
+      <a href="engagement.html" aria-current="page">Engagement</a>
+      <a href="manage.html">Manage</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <div id="status"></div>
+  <div id="content"><p class="note">Loading…</p></div>
+</main>
+
+<footer class="site-footer">Life Tempo — Phase 5: Engagement Scoring and Heat Maps</footer>
+
+<script src="js/api.js"></script>
+<script>
+const statusEl = document.getElementById('status');
+const contentEl = document.getElementById('content');
+
+const PERIODS = [
+  { key: 'Week', label: 'This Week' },
+  { key: 'Rolling4Weeks', label: 'Rolling 4 Weeks' },
+  { key: 'Month', label: 'This Month' },
+  { key: 'Quarter', label: 'This Quarter' },
+  { key: 'Year', label: 'This Year' },
+];
+
+function showStatus(msg) {
+  if (!msg) { statusEl.style.display = 'none'; return; }
+  statusEl.textContent = msg;
+  statusEl.style.display = 'block';
+}
+
+// Maps a score to the app's status language (spec section 10) and one of
+// the badge classes already used for goal status (met/behind/over) so the
+// same green/amber/red vocabulary reads consistently everywhere.
+function engagementLabel(percent) {
+  if (percent === null || percent === undefined) return { label: 'No data', cls: 'inactive' };
+  if (percent >= 90) return { label: 'Strongly engaged', cls: 'met' };
+  if (percent >= 70) return { label: 'On track', cls: 'met' };
+  if (percent >= 50) return { label: 'Worth noticing', cls: 'behind' };
+  return { label: 'May need attention', cls: 'over' };
+}
+
+function breakdownTableHtml(goals) {
+  const rows = goals.map(g => {
+    const { cls } = engagementLabel(g.ScorePercent);
+    return `<tr>
+      <td>${escapeHtml(g.Name)}${g.HasActivities ? '' : ' <em>(no activities linked)</em>'}</td>
+      <td>${g.Actual} / ${g.Expected}</td>
+      <td>&times;${g.Weight}</td>
+      <td><span class="badge ${cls}">${g.ScorePercent}%</span></td>
+    </tr>`;
+  }).join('');
+  return `
+    <table class="breakdown-table">
+      <thead><tr><th>Goal</th><th>Actual / Expected</th><th>Weight</th><th>Score</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
+function scoreCardEl(periodLabel, eng) {
+  const { label, cls } = engagementLabel(eng.Overall);
+  const card = document.createElement('div');
+  card.className = `card score-card ${cls}`;
+  const hasGoals = eng.Goals.length > 0;
+  card.innerHTML = `
+    <div class="score-num">${eng.Overall === null ? '—' : eng.Overall + '%'}</div>
+    <div class="badge ${cls}">${label}</div>
+    <div class="score-period">${periodLabel}</div>
+    ${hasGoals
+      ? `<p><button type="button" class="btn secondary" data-toggle style="font-size:0.8rem; padding:0.3rem 0.6rem;">Breakdown</button></p>
+         <div class="breakdown" style="display:none;">${breakdownTableHtml(eng.Goals)}</div>`
+      : `<p class="note" style="margin-top:0.6rem; font-size:0.82rem;">No scoreable goals for this period.</p>`}
+  `;
+  if (hasGoals) {
+    const btn = card.querySelector('[data-toggle]');
+    const box = card.querySelector('.breakdown');
+    btn.addEventListener('click', () => {
+      const open = box.style.display !== 'none';
+      box.style.display = open ? 'none' : 'block';
+      btn.textContent = open ? 'Breakdown' : 'Hide';
+    });
+  }
+  return card;
+}
+
+function heatCellHtml(percent) {
+  if (percent === null || percent === undefined) return '<td class="heat-none">—</td>';
+  const { cls } = engagementLabel(percent);
+  const cellCls = cls === 'met' ? 'heat-good' : cls === 'behind' ? 'heat-notice' : cls === 'over' ? 'heat-attention' : 'heat-none';
+  return `<td class="${cellCls}">${Math.round(percent)}%</td>`;
+}
+
+function formatWeekLabel(start) {
+  const [y, m, d] = start.split('-').map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+function renderHeatmap(weeksData) {
+  const wrap = document.getElementById('heatmap-wrap');
+  const goalMap = new Map();
+  weeksData.forEach(w => w.Goals.forEach(g => goalMap.set(g.GoalId, g.Name)));
+  if (!goalMap.size) {
+    wrap.innerHTML = '<p class="note">No scoreable goals yet — add one on <a href="manage.html">Manage</a> and check back after a week of logging.</p>';
+    return;
+  }
+  const goalCols = Array.from(goalMap.entries());
+  const head = `<tr><th>Week of</th>${goalCols.map(([, name]) => `<th>${escapeHtml(name)}</th>`).join('')}<th>Overall</th></tr>`;
+  const rows = weeksData.map(w => {
+    const cells = goalCols.map(([id]) => {
+      const g = w.Goals.find(x => x.GoalId === id);
+      return heatCellHtml(g ? g.ScorePercent : null);
+    }).join('');
+    return `<tr><td class="week-label">${formatWeekLabel(w.WeekStart)}</td>${cells}${heatCellHtml(w.Overall)}</tr>`;
+  }).join('');
+  wrap.innerHTML = `<div class="table-wrap"><table class="heatmap"><thead>${head}</thead><tbody>${rows}</tbody></table></div>`;
+}
+
+function render() {
+  contentEl.innerHTML = `
+    <div class="card">
+      <h3>Engagement</h3>
+      <p class="note">
+        A weighted average of your active goals for each period — the app's central
+        question, "Am I living the retirement I intended to live?" TrackOnly goals
+        are tracked but don't count toward the score. Click a card's Breakdown to
+        see exactly how it was calculated.
+      </p>
+      <div class="score-grid" id="score-grid"></div>
+    </div>
+    <div class="card">
+      <h3>Weekly Heat Map</h3>
+      <p class="note">Last 8 weeks, by goal.</p>
+      <div id="heatmap-wrap"><p class="note">Loading…</p></div>
+      <p class="note">
+        <span class="legend-dot" style="background:#d9ecd6;"></span>70%+ on track
+        <span class="legend-dot" style="background:#f6e6cf; margin-left:1rem;"></span>50-69% worth noticing
+        <span class="legend-dot" style="background:#f6d6d6; margin-left:1rem;"></span>below 50% may need attention
+      </p>
+    </div>
+  `;
+}
+
+async function load() {
+  try {
+    const [summaryRes, heatRes] = await Promise.all([
+      fetchData('engagementSummary'), fetchData('engagementHeatmap', { weeks: 8 }),
+    ]);
+    render();
+    const summary = (summaryRes && summaryRes.summary) || {};
+    const grid = document.getElementById('score-grid');
+    PERIODS.forEach(p => {
+      if (summary[p.key]) grid.appendChild(scoreCardEl(p.label, summary[p.key]));
+    });
+    renderHeatmap((heatRes && heatRes.weeks) || []);
+  } catch (e) {
+    handleError(contentEl, e);
+  }
+}
+
+(async () => {
+  await captureSso();
+  await load();
+})();
+</script>
+
+</body>
+</html>

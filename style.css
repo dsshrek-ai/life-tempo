@@ -140,6 +140,43 @@ textarea { max-width: 100%; min-height: 3.5rem; resize: vertical; }
 .progress-fill { background: var(--accent); height: 100%; border-radius: 999px; }
 .progress-fill.over { background: #c25b5b; }
 
+/* ---- engagement score cards (Phase 5) ---- */
+.score-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 0.8rem;
+}
+.score-card { text-align: center; }
+.score-card .score-num { font-size: 2.1rem; font-weight: bold; line-height: 1.1; }
+.score-card.met .score-num { color: var(--green); }
+.score-card.behind .score-num { color: var(--amber); }
+.score-card.over .score-num { color: #a13a3a; }
+.score-card.inactive .score-num { color: var(--muted); }
+.score-card .score-period { color: var(--muted); font-size: 0.82rem; margin-top: 0.3rem; }
+.score-card .breakdown { margin-top: 0.7rem; text-align: left; }
+
+.breakdown-table { width: 100%; border-collapse: collapse; margin-top: 0.4rem; font-size: 0.85rem; }
+.breakdown-table th, .breakdown-table td { padding: 0.3rem 0.35rem; border-bottom: 1px solid var(--border); text-align: left; }
+.breakdown-table th { color: var(--muted); font-weight: normal; }
+
+/* ---- weekly heat map (Phase 5) ---- */
+table.heatmap { border-collapse: collapse; width: 100%; }
+table.heatmap th, table.heatmap td {
+  border: 1px solid var(--border);
+  padding: 0.4rem 0.5rem;
+  text-align: center;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+table.heatmap th { background: var(--tint); font-weight: bold; }
+table.heatmap td.week-label { text-align: left; font-weight: bold; }
+table.heatmap td.heat-good { background: #d9ecd6; color: var(--green); font-weight: bold; }
+table.heatmap td.heat-notice { background: #f6e6cf; color: var(--amber); font-weight: bold; }
+table.heatmap td.heat-attention { background: #f6d6d6; color: #a13a3a; font-weight: bold; }
+table.heatmap td.heat-none { background: var(--tint); color: var(--muted); }
+
+.legend-dot { display: inline-block; width: 0.7rem; height: 0.7rem; border-radius: 3px; margin-right: 0.3rem; vertical-align: middle; }
+
 /* ---- quick log strip ---- */
 .quick-log-strip { display: flex; flex-wrap: wrap; gap: 0.5rem; }
 .quick-log-strip .btn { font-size: 0.92rem; padding: 0.5rem 0.9rem; }
