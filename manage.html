@@ -25,7 +25,7 @@
   <div id="content"><p class="note">Loading…</p></div>
 </main>
 
-<footer class="site-footer">Life Tempo — Phase 3: Goals, Cadence, and Weekly Progress</footer>
+<footer class="site-footer">Life Tempo — Phase 4: People, Shared Life, and Learning</footer>
 
 <script src="js/api.js"></script>
 <script>
@@ -36,6 +36,9 @@ let CATEGORIES = [];
 let LOCATIONS = [];
 let ACTIVITIES = [];
 let GOALS = [];
+let PEOPLE = [];
+let TAGS = [];
+let LEARNING_PROJECTS = [];
 
 const GOAL_TYPE_OPTS = ['Minimum', 'Target', 'Maximum', 'TrackOnly'];
 const CADENCE_TYPE_OPTS = ['Daily', 'Weekly', 'Monthly'];
@@ -308,6 +311,144 @@ async function handleGoalAction(btn) {
   }
 }
 
+// ---------------- People ----------------
+
+const RELATIONSHIP_OPTS = ['', 'Spouse', 'Child', 'Grandchild', 'Friend', 'Family', 'Other'];
+
+function renderPeople() {
+  const rows = PEOPLE.map(p => `
+    <tr data-id="${p.Id}" class="${p.Active ? '' : 'inactive-row'}">
+      <td>${txt('displayName', p.DisplayName)}</td>
+      <td>${selectOptions('relationshipType', RELATIONSHIP_OPTS.filter(r => r).map(r => ({ v: r })), 'v', 'v', p.RelationshipType, '(none)')}</td>
+      <td>${chk('active', p.Active)}</td>
+      <td><button class="btn" data-act="save-person">Save</button></td>
+    </tr>`).join('');
+  const addRow = `
+    <tr id="add-person">
+      <td>${txt('displayName', '')}</td>
+      <td>${selectOptions('relationshipType', RELATIONSHIP_OPTS.filter(r => r).map(r => ({ v: r })), 'v', 'v', '', '(none)')}</td>
+      <td>${chk('active', true)}</td>
+      <td><button class="btn" data-act="add-person">Add</button></td>
+    </tr>`;
+  return `
+    <div class="table-wrap">
+      <table class="grid">
+        <thead><tr><th>Name</th><th>Relationship</th><th>Active</th><th>Actions</th></tr></thead>
+        <tbody>${rows}${addRow}</tbody>
+      </table>
+    </div>`;
+}
+
+async function handlePersonAction(btn) {
+  const act = btn.dataset.act;
+  const tr = btn.closest('tr');
+  const data = readRow(tr);
+  showStatus('');
+  if (!data.displayName.trim()) { showStatus('Person name is required.'); return; }
+  btn.disabled = true;
+  try {
+    if (act === 'add-person') {
+      await postAction('addPerson', data);
+    } else {
+      await postAction('updatePerson', { id: Number(tr.dataset.id), ...data });
+    }
+    await reloadAll();
+  } catch (e) {
+    showStatus("Couldn't save that person.");
+    btn.disabled = false;
+  }
+}
+
+// ---------------- Tags ----------------
+
+function renderTags() {
+  const rows = TAGS.map(t => `
+    <tr data-id="${t.Id}" class="${t.Active ? '' : 'inactive-row'}">
+      <td>${txt('name', t.Name)}</td>
+      <td>${chk('active', t.Active)}</td>
+      <td><button class="btn" data-act="save-tag">Save</button></td>
+    </tr>`).join('');
+  const addRow = `
+    <tr id="add-tag">
+      <td>${txt('name', '')}</td>
+      <td>${chk('active', true)}</td>
+      <td><button class="btn" data-act="add-tag">Add</button></td>
+    </tr>`;
+  return `
+    <div class="table-wrap">
+      <table class="grid">
+        <thead><tr><th>Name</th><th>Active</th><th>Actions</th></tr></thead>
+        <tbody>${rows}${addRow}</tbody>
+      </table>
+    </div>`;
+}
+
+async function handleTagAction(btn) {
+  const act = btn.dataset.act;
+  const tr = btn.closest('tr');
+  const data = readRow(tr);
+  showStatus('');
+  if (!data.name.trim()) { showStatus('Tag name is required.'); return; }
+  btn.disabled = true;
+  try {
+    if (act === 'add-tag') {
+      await postAction('addTag', data);
+    } else {
+      await postAction('updateTag', { id: Number(tr.dataset.id), ...data });
+    }
+    await reloadAll();
+  } catch (e) {
+    showStatus("Couldn't save that tag.");
+    btn.disabled = false;
+  }
+}
+
+// ---------------- Learning Projects ----------------
+
+function renderLearningProjects() {
+  const rows = LEARNING_PROJECTS.map(lp => `
+    <tr data-id="${lp.Id}" class="${lp.Active ? '' : 'inactive-row'}">
+      <td>${txt('name', lp.Name)}</td>
+      <td>${txt('description', lp.Description)}</td>
+      <td>${chk('active', lp.Active)}</td>
+      <td><button class="btn" data-act="save-lp">Save</button></td>
+    </tr>`).join('');
+  const addRow = `
+    <tr id="add-lp">
+      <td>${txt('name', '')}</td>
+      <td>${txt('description', '')}</td>
+      <td>${chk('active', true)}</td>
+      <td><button class="btn" data-act="add-lp">Add</button></td>
+    </tr>`;
+  return `
+    <div class="table-wrap">
+      <table class="grid">
+        <thead><tr><th>Name</th><th>Description</th><th>Active</th><th>Actions</th></tr></thead>
+        <tbody>${rows}${addRow}</tbody>
+      </table>
+    </div>`;
+}
+
+async function handleLearningProjectAction(btn) {
+  const act = btn.dataset.act;
+  const tr = btn.closest('tr');
+  const data = readRow(tr);
+  showStatus('');
+  if (!data.name.trim()) { showStatus('Learning project name is required.'); return; }
+  btn.disabled = true;
+  try {
+    if (act === 'add-lp') {
+      await postAction('addLearningProject', data);
+    } else {
+      await postAction('updateLearningProject', { id: Number(tr.dataset.id), ...data });
+    }
+    await reloadAll();
+  } catch (e) {
+    showStatus("Couldn't save that learning project.");
+    btn.disabled = false;
+  }
+}
+
 // ---------------- Shell ----------------
 
 function render() {
@@ -332,21 +473,43 @@ function render() {
       <p class="note">Compare actual activity against an intended rhythm (e.g. "Exercise 5 per week"). Link a goal to the activities that should count toward it, then check <a href="dashboard.html">Dashboard</a> for progress. Ctrl/Cmd-click to select multiple activities.</p>
       <div id="goal-table">${renderGoals()}</div>
     </div>
+    <div class="card">
+      <h3>People</h3>
+      <p class="note">Who you do things with — link them to a log entry on Today/History to record participation.</p>
+      <div id="person-table">${renderPeople()}</div>
+    </div>
+    <div class="card">
+      <h3>Tags</h3>
+      <p class="note">Freeform labels for a log entry (Outdoor, Music, ...) beyond its Category.</p>
+      <div id="tag-table">${renderTags()}</div>
+    </div>
+    <div class="card">
+      <h3>Learning Projects</h3>
+      <p class="note">Group related learning (Photography, Genealogy, ...). Attach one to a log entry along with Learn/Apply to distinguish instruction from practice.</p>
+      <div id="lp-table">${renderLearningProjects()}</div>
+    </div>
   `;
   contentEl.querySelectorAll('[data-act^="save-cat"], [data-act="add-cat"]').forEach(b => b.addEventListener('click', () => handleCategoryAction(b)));
   contentEl.querySelectorAll('[data-act^="save-loc"], [data-act="add-loc"]').forEach(b => b.addEventListener('click', () => handleLocationAction(b)));
   contentEl.querySelectorAll('[data-act^="save-act"], [data-act="add-act"]').forEach(b => b.addEventListener('click', () => handleActivityAction(b)));
   contentEl.querySelectorAll('[data-act^="save-goal"], [data-act="add-goal"]').forEach(b => b.addEventListener('click', () => handleGoalAction(b)));
+  contentEl.querySelectorAll('[data-act^="save-person"], [data-act="add-person"]').forEach(b => b.addEventListener('click', () => handlePersonAction(b)));
+  contentEl.querySelectorAll('[data-act^="save-tag"], [data-act="add-tag"]').forEach(b => b.addEventListener('click', () => handleTagAction(b)));
+  contentEl.querySelectorAll('[data-act^="save-lp"], [data-act="add-lp"]').forEach(b => b.addEventListener('click', () => handleLearningProjectAction(b)));
 }
 
 async function reloadAll() {
-  const [catRes, locRes, actRes, goalRes] = await Promise.all([
+  const [catRes, locRes, actRes, goalRes, personRes, tagRes, lpRes] = await Promise.all([
     fetchData('categories'), fetchData('locations'), fetchData('activities'), fetchData('goals'),
+    fetchData('people'), fetchData('tags'), fetchData('learningProjects'),
   ]);
   CATEGORIES = (catRes && catRes.categories) || [];
   LOCATIONS = (locRes && locRes.locations) || [];
   ACTIVITIES = (actRes && actRes.activities) || [];
   GOALS = (goalRes && goalRes.goals) || [];
+  PEOPLE = (personRes && personRes.people) || [];
+  TAGS = (tagRes && tagRes.tags) || [];
+  LEARNING_PROJECTS = (lpRes && lpRes.learningProjects) || [];
   render();
 }
 

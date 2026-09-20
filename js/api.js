@@ -193,6 +193,8 @@ function logRowEl(entry, onEdit, onDelete) {
   if (entry.DurationMinutes !== null) timeBits.push(formatDuration(entry.DurationMinutes));
   if (entry.LocationName) timeBits.push(entry.LocationName);
   if (entry.CostAmount !== null) timeBits.push(formatMoney(entry.CostAmount));
+  if (entry.PersonNames && entry.PersonNames.length) timeBits.push('With ' + entry.PersonNames.join(', '));
+  if (entry.LearningProjectName) timeBits.push(`${entry.LearningMode || 'Learn'}: ${entry.LearningProjectName}`);
 
   const main = document.createElement('div');
   main.className = 'lr-main';
@@ -200,8 +202,10 @@ function logRowEl(entry, onEdit, onDelete) {
     <div class="lr-activity">${escapeHtml(entry.ActivityName)}
       ${entry.Productive ? '<span class="badge productive">Productive</span>' : ''}
       ${entry.Billable ? '<span class="badge billable">Billable</span>' : ''}
+      ${entry.SharedLife ? '<span class="badge tracked">Shared Life</span>' : ''}
     </div>
     <div class="lr-meta">${escapeHtml(timeBits.join(' · '))}</div>
+    ${entry.TagNames && entry.TagNames.length ? `<div class="lr-meta">${entry.TagNames.map(t => `<span class="badge inactive">${escapeHtml(t)}</span>`).join(' ')}</div>` : ''}
     ${entry.Notes ? `<div class="lr-notes">${escapeHtml(entry.Notes)}</div>` : ''}
   `;
 
@@ -223,6 +227,19 @@ function logRowEl(entry, onEdit, onDelete) {
   row.appendChild(main);
   row.appendChild(actions);
   return row;
+}
+
+// Builds a <select multiple> for id-based multi-select fields (goal/log
+// activities, log participants, log tags). `selectedIds` may hold numbers
+// or strings -- compared as strings so either works.
+function multiSelectHtml(id, items, valueKey, labelKey, selectedIds) {
+  const selectedSet = new Set((selectedIds || []).map(String));
+  const opts = items.map(i => `<option value="${i[valueKey]}" ${selectedSet.has(String(i[valueKey])) ? 'selected' : ''}>${escapeHtml(i[labelKey])}</option>`).join('');
+  return `<select id="${id}" multiple size="${Math.min(5, Math.max(3, items.length || 1))}">${opts}</select>`;
+}
+
+function selectedValues(selectEl) {
+  return Array.from(selectEl.selectedOptions).map(o => o.value);
 }
 
 // ---- Phase 3 shared helpers (Dashboard / Today's day-status) ----

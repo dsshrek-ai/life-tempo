@@ -10,19 +10,18 @@ Full philosophy, conceptual model, MySQL spec, and phased roadmap:
 
 ## Status
 
-**Phase 3 — Goals, Cadence, and Weekly Progress** (see spec section 146).
-Phases 1 (login/tenant-safe API) and 2 (Categories, Locations, Activities,
-Today/History activity logging) are done. Phase 3 adds:
+**Phase 4 — People, Shared Life, and Learning** (see spec section 146).
+Phases 1-3 (login/tenant-safe API; Categories/Locations/Activities logging;
+Goals/cadence/weekly Dashboard) are done. Phase 4 adds:
 
-- **Manage → Goals** — name, type (Minimum/Target/Maximum/TrackOnly), cadence
-  (Daily/Weekly/Monthly), target value, and which activities count toward it
-- **Dashboard** — current-week progress for Daily/Weekly goals and
-  current-month progress for Monthly goals, with a status badge and bar
-- **Today → day type** — mark today Home/Local Outing/Travel/Vacation/Sick/
-  Special Event so Daily-cadence goals don't expect activity on days that
-  aren't "home days"
+- **Manage → People / Tags / Learning Projects** — new master lists
+- **Today/History log form** — "With" (people), "Shared Life" flag, Tags,
+  and an optional Learning Project + Learn/Apply mode per entry
+- **Dashboard → Shared Life** — a count of Shared Life entries this week
+  and this month
 
-Phase 4 (people, shared life, learning) is next.
+Phase 5 (engagement scoring and heat maps) is next — the spec (section 146)
+calls it the first major product milestone.
 
 ## Stack
 

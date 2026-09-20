@@ -170,6 +170,88 @@ CREATE TABLE IF NOT EXISTS lt_day_status (
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 ) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- ---------- PHASE 4: People, Shared Life, and Learning ----------
+-- Trimmed from the V3 spec's richer model (sections 59-61, 71-73):
+--
+-- - Shared Life becomes a single flag on the log entry itself (like
+--   Productive/Billable already are) rather than a per-person
+--   ActivityParticipant.SharedLifeFlag -- nothing yet needs per-person
+--   granularity, and this is much simpler to log against.
+-- - LearningActivityLink's 1:1 relationship (spec section 117: "One
+--   ActivityLog should normally describe one learning context") becomes
+--   two nullable columns directly on lt_activity_log instead of a
+--   separate joined table.
+-- - Tags apply per log entry only (lt_activity_log_tag) -- default
+--   per-Activity tags (spec's ActivityTag) are skipped for now; typing
+--   a tag occasionally is cheap enough that pre-filling isn't essential yet.
+
+CREATE TABLE IF NOT EXISTS lt_people (
+  id                INT AUTO_INCREMENT PRIMARY KEY,
+  user_id           INT NOT NULL,
+  display_name      VARCHAR(150) NOT NULL,
+  relationship_type VARCHAR(50) NULL,
+  active            TINYINT(1) NOT NULL DEFAULT 1,
+  created_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  KEY ix_lt_people_user (user_id, active, display_name),
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS lt_tags (
+  id          INT AUTO_INCREMENT PRIMARY KEY,
+  user_id     INT NOT NULL,
+  name        VARCHAR(100) NOT NULL,
+  active      TINYINT(1) NOT NULL DEFAULT 1,
+  created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_lt_tags_user_name (user_id, name),
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS lt_learning_projects (
+  id          INT AUTO_INCREMENT PRIMARY KEY,
+  user_id     INT NOT NULL,
+  name        VARCHAR(150) NOT NULL,
+  description VARCHAR(1000) NULL,
+  active      TINYINT(1) NOT NULL DEFAULT 1,
+  created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_lt_learning_projects_user_name (user_id, name),
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS lt_activity_log_person (
+  activity_log_id  INT NOT NULL,
+  person_id        INT NOT NULL,
+  PRIMARY KEY (activity_log_id, person_id),
+  KEY ix_lt_activity_log_person_person (person_id, activity_log_id),
+  FOREIGN KEY (activity_log_id) REFERENCES lt_activity_log(id) ON DELETE CASCADE,
+  FOREIGN KEY (person_id) REFERENCES lt_people(id) ON DELETE CASCADE
+) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS lt_activity_log_tag (
+  activity_log_id  INT NOT NULL,
+  tag_id           INT NOT NULL,
+  PRIMARY KEY (activity_log_id, tag_id),
+  KEY ix_lt_activity_log_tag_tag (tag_id, activity_log_id),
+  FOREIGN KEY (activity_log_id) REFERENCES lt_activity_log(id) ON DELETE CASCADE,
+  FOREIGN KEY (tag_id) REFERENCES lt_tags(id) ON DELETE CASCADE
+) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ---------- SCHEMA CHANGE: shared life + learning columns on ActivityLog ----------
+-- Run once (plain ALTER, not IF NOT EXISTS -- matches the convention already
+-- used in my-apps-hub's own schema.sql for evolutionary changes).
+
+ALTER TABLE lt_activity_log
+  ADD COLUMN shared_life TINYINT(1) NOT NULL DEFAULT 0 AFTER billable,
+  ADD COLUMN learning_project_id INT NULL AFTER notes,
+  ADD COLUMN learning_mode VARCHAR(10) NULL AFTER learning_project_id;
+
+ALTER TABLE lt_activity_log
+  ADD KEY ix_lt_activity_log_shared_life (user_id, shared_life, activity_date),
+  ADD KEY ix_lt_activity_log_learning (user_id, learning_project_id, activity_date),
+  ADD FOREIGN KEY (learning_project_id) REFERENCES lt_learning_projects(id) ON DELETE SET NULL;
+
 -- ============================================================
 -- BOOTSTRAP (run once, after you've signed up through My Apps Hub):
 --
@@ -186,4 +268,8 @@ CREATE TABLE IF NOT EXISTS lt_day_status (
 --
 -- 4) On Manage's Goals section, add a goal and link it to the activities
 --    that should count toward it, then check Dashboard for its progress.
+--
+-- 5) On Manage's People/Tags/Learning Projects sections, add a few, then
+--    use them from the Today/History log form (participants, shared life,
+--    tags, learning project + mode).
 -- ============================================================

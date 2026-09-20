@@ -106,3 +106,24 @@ Today.
 5. On **Today**, the "Today is a:" selector defaults to Home — only change
    it on days that shouldn't count toward Daily-cadence goals (Travel,
    Vacation, Sick, ...).
+
+## Phase 4 update
+
+Phase 4 adds People, Tags, Learning Projects, a Shared Life flag, and
+Learn/Apply tracking on the log form.
+
+1. In phpMyAdmin, run `api/schema.sql` again. It adds four new tables
+   (`lt_people`, `lt_tags`, `lt_learning_projects`, `lt_activity_log_person`,
+   `lt_activity_log_tag` — five, actually) plus two plain `ALTER TABLE`
+   statements on `lt_activity_log` (`shared_life`, `learning_project_id`,
+   `learning_mode` columns + their indexes/FK). **The ALTER statements are
+   not idempotent** — if you already ran this Phase 4 block once, skip
+   re-running just those two `ALTER TABLE` statements (the `CREATE TABLE IF
+   NOT EXISTS` ones are still safe to re-run).
+2. Re-upload `api/api.php`.
+3. Push/pull the updated front end.
+4. On **Manage**, add a few People and Tags, and a Learning Project if
+   you're tracking one. Then on **Today/History**, a log entry can name who
+   was with you, mark itself Shared Life, carry tags, and optionally link a
+   Learning Project with a Learn/Apply mode.
+5. Check **Dashboard** for the new Shared Life count.

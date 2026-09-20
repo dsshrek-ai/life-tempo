@@ -21,6 +21,12 @@
 // evaluates the current week for Daily/Weekly goals and the current month
 // for Monthly goals, so there's no persisted "snapshot" table yet (spec
 // section 79 -- add one later only if live calculation proves too slow).
+//
+// Phase 4 (People, Shared Life, and Learning) adds People and Tags (linked
+// per log entry via lt_activity_log_person/lt_activity_log_tag through the
+// same syncBridge() used for Goal<->Activity), a Shared Life flag directly
+// on lt_activity_log, and Learning Projects (linked 1:1 via two nullable
+// columns rather than a separate join table -- see schema.sql for why).
 
 require_once __DIR__ . '/config.php';
 
@@ -409,10 +415,17 @@ function minutesBetween(?string $start, ?string $end): ?int {
 function listActivityLog(int $userId, string $from, string $to, ?int $activityId): array {
   $sql = 'SELECT al.id, al.activity_id, a.name AS activity_name, al.activity_date,
                  al.start_time, al.end_time, al.duration_minutes, al.location_id,
-                 l.name AS location_name, al.productive, al.billable, al.cost_amount, al.notes
+                 l.name AS location_name, al.productive, al.billable, al.shared_life,
+                 al.cost_amount, al.notes, al.learning_project_id, lp.name AS learning_project_name,
+                 al.learning_mode,
+                 (SELECT GROUP_CONCAT(alp.person_id) FROM lt_activity_log_person alp WHERE alp.activity_log_id = al.id) AS person_ids,
+                 (SELECT GROUP_CONCAT(p.display_name SEPARATOR \'||\') FROM lt_activity_log_person alp2 JOIN lt_people p ON p.id = alp2.person_id WHERE alp2.activity_log_id = al.id) AS person_names,
+                 (SELECT GROUP_CONCAT(alt.tag_id) FROM lt_activity_log_tag alt WHERE alt.activity_log_id = al.id) AS tag_ids,
+                 (SELECT GROUP_CONCAT(t.name SEPARATOR \'||\') FROM lt_activity_log_tag alt2 JOIN lt_tags t ON t.id = alt2.tag_id WHERE alt2.activity_log_id = al.id) AS tag_names
           FROM lt_activity_log al
           JOIN lt_activities a ON a.id = al.activity_id
           LEFT JOIN lt_locations l ON l.id = al.location_id
+          LEFT JOIN lt_learning_projects lp ON lp.id = al.learning_project_id
           WHERE al.user_id = ? AND al.activity_date BETWEEN ? AND ?';
   $types = 'iss';
   $params = [$userId, $from, $to];
@@ -440,8 +453,16 @@ function listActivityLog(int $userId, string $from, string $to, ?int $activityId
       'LocationName' => (string)($r['location_name'] ?? ''),
       'Productive' => (bool)$r['productive'],
       'Billable' => (bool)$r['billable'],
+      'SharedLife' => (bool)$r['shared_life'],
       'CostAmount' => $r['cost_amount'] !== null ? (float)$r['cost_amount'] : null,
       'Notes' => (string)($r['notes'] ?? ''),
+      'LearningProjectId' => $r['learning_project_id'] !== null ? (int)$r['learning_project_id'] : null,
+      'LearningProjectName' => (string)($r['learning_project_name'] ?? ''),
+      'LearningMode' => $r['learning_mode'],
+      'PersonIds' => $r['person_ids'] ? array_map('intval', explode(',', $r['person_ids'])) : [],
+      'PersonNames' => $r['person_names'] ? explode('||', $r['person_names']) : [],
+      'TagIds' => $r['tag_ids'] ? array_map('intval', explode(',', $r['tag_ids'])) : [],
+      'TagNames' => $r['tag_names'] ? explode('||', $r['tag_names']) : [],
     ];
   }
   $stmt->close();
@@ -461,38 +482,62 @@ function activityLogFields(int $userId, array $b): array {
   $locationId = ownedId('lt_locations', isset($b['locationId']) && $b['locationId'] !== '' ? (int)$b['locationId'] : null, $userId);
   $productive = !empty($b['productive']) ? 1 : 0;
   $billable = !empty($b['billable']) ? 1 : 0;
+  $sharedLife = !empty($b['sharedLife']) ? 1 : 0;
   $costAmount = (isset($b['costAmount']) && $b['costAmount'] !== '') ? (float)$b['costAmount'] : null;
   $notes = nullIfEmpty((string)($b['notes'] ?? ''));
-  return [$activityId, $date, $startTime, $endTime, $duration, $locationId, $productive, $billable, $costAmount, $notes];
+  $learningProjectId = ownedId('lt_learning_projects', isset($b['learningProjectId']) && $b['learningProjectId'] !== '' ? (int)$b['learningProjectId'] : null, $userId);
+  $learningMode = $learningProjectId !== null ? normEnum((string)($b['learningMode'] ?? ''), LEARNING_MODES, 'Learn') : null;
+  $personIds = ownedIdsIn('lt_people', $userId, $b['personIds'] ?? []);
+  $tagIds = ownedIdsIn('lt_tags', $userId, $b['tagIds'] ?? []);
+  return [$activityId, $date, $startTime, $endTime, $duration, $locationId, $productive, $billable,
+          $sharedLife, $costAmount, $notes, $learningProjectId, $learningMode, $personIds, $tagIds];
 }
 
 function addActivityLog(int $userId, array $b): int {
-  [$activityId, $date, $startTime, $endTime, $duration, $locationId, $productive, $billable, $costAmount, $notes] = activityLogFields($userId, $b);
+  [$activityId, $date, $startTime, $endTime, $duration, $locationId, $productive, $billable,
+   $sharedLife, $costAmount, $notes, $learningProjectId, $learningMode, $personIds, $tagIds] = activityLogFields($userId, $b);
   if ($activityId === null) { fail('A valid activity is required'); }
+  $pairs = [
+    ['i', $userId], ['i', $activityId], ['s', $date], ['s', $startTime], ['s', $endTime],
+    ['i', $duration], ['i', $locationId], ['i', $productive], ['i', $billable], ['i', $sharedLife],
+    ['d', $costAmount], ['s', $notes], ['i', $learningProjectId], ['s', $learningMode],
+  ];
   $stmt = db()->prepare(
     'INSERT INTO lt_activity_log
-      (user_id, activity_id, activity_date, start_time, end_time, duration_minutes, location_id, productive, billable, cost_amount, notes)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      (user_id, activity_id, activity_date, start_time, end_time, duration_minutes, location_id,
+       productive, billable, shared_life, cost_amount, notes, learning_project_id, learning_mode)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
   );
-  $stmt->bind_param('iisssiiiids', $userId, $activityId, $date, $startTime, $endTime, $duration, $locationId, $productive, $billable, $costAmount, $notes);
+  $stmt->bind_param(implode('', array_column($pairs, 0)), ...array_column($pairs, 1));
   $stmt->execute();
   $id = $stmt->insert_id;
   $stmt->close();
+  syncBridge('lt_activity_log_person', 'activity_log_id', $id, 'person_id', $personIds);
+  syncBridge('lt_activity_log_tag', 'activity_log_id', $id, 'tag_id', $tagIds);
   return $id;
 }
 
 function updateActivityLog(int $userId, int $id, array $b): void {
-  [$activityId, $date, $startTime, $endTime, $duration, $locationId, $productive, $billable, $costAmount, $notes] = activityLogFields($userId, $b);
+  [$activityId, $date, $startTime, $endTime, $duration, $locationId, $productive, $billable,
+   $sharedLife, $costAmount, $notes, $learningProjectId, $learningMode, $personIds, $tagIds] = activityLogFields($userId, $b);
   if ($activityId === null) { fail('A valid activity is required'); }
+  $pairs = [
+    ['i', $activityId], ['s', $date], ['s', $startTime], ['s', $endTime], ['i', $duration],
+    ['i', $locationId], ['i', $productive], ['i', $billable], ['i', $sharedLife], ['d', $costAmount],
+    ['s', $notes], ['i', $learningProjectId], ['s', $learningMode], ['i', $id], ['i', $userId],
+  ];
   $stmt = db()->prepare(
     'UPDATE lt_activity_log
      SET activity_id = ?, activity_date = ?, start_time = ?, end_time = ?, duration_minutes = ?,
-         location_id = ?, productive = ?, billable = ?, cost_amount = ?, notes = ?
+         location_id = ?, productive = ?, billable = ?, shared_life = ?, cost_amount = ?, notes = ?,
+         learning_project_id = ?, learning_mode = ?
      WHERE id = ? AND user_id = ?'
   );
-  $stmt->bind_param('isssiiiidsii', $activityId, $date, $startTime, $endTime, $duration, $locationId, $productive, $billable, $costAmount, $notes, $id, $userId);
+  $stmt->bind_param(implode('', array_column($pairs, 0)), ...array_column($pairs, 1));
   $stmt->execute();
   $stmt->close();
+  syncBridge('lt_activity_log_person', 'activity_log_id', $id, 'person_id', $personIds);
+  syncBridge('lt_activity_log_tag', 'activity_log_id', $id, 'tag_id', $tagIds);
 }
 
 function deleteActivityLog(int $userId, int $id): void {
@@ -569,25 +614,31 @@ function listGoals(int $userId): array {
   return $out;
 }
 
-function ownedActivityIds(int $userId, $ids): array {
+// Validates a list of ids as owned by $userId in $table, dropping any that
+// aren't (bad/foreign selections from a multi-select are silently ignored
+// rather than failing the whole request).
+function ownedIdsIn(string $table, int $userId, $ids): array {
   if (!is_array($ids)) { return []; }
   $out = [];
   foreach ($ids as $id) {
-    $owned = ownedId('lt_activities', (int)$id, $userId);
+    $owned = ownedId($table, (int)$id, $userId);
     if ($owned !== null) { $out[] = $owned; }
   }
   return array_values(array_unique($out));
 }
 
-function setGoalActivities(int $goalId, array $activityIds): void {
-  $del = db()->prepare('DELETE FROM lt_goal_activity WHERE goal_id = ?');
-  $del->bind_param('i', $goalId);
+// Replaces every row for $ownId in a many-to-many bridge table with exactly
+// $otherIds -- the standard "this owner now links to exactly this set"
+// pattern used by Goal<->Activity (Phase 3) and Log<->Person/Tag (Phase 4).
+function syncBridge(string $table, string $ownColumn, int $ownId, string $otherColumn, array $otherIds): void {
+  $del = db()->prepare("DELETE FROM `$table` WHERE `$ownColumn` = ?");
+  $del->bind_param('i', $ownId);
   $del->execute();
   $del->close();
-  if (!$activityIds) { return; }
-  $ins = db()->prepare('INSERT INTO lt_goal_activity (goal_id, activity_id) VALUES (?, ?)');
-  foreach ($activityIds as $activityId) {
-    $ins->bind_param('ii', $goalId, $activityId);
+  if (!$otherIds) { return; }
+  $ins = db()->prepare("INSERT INTO `$table` (`$ownColumn`, `$otherColumn`) VALUES (?, ?)");
+  foreach ($otherIds as $otherId) {
+    $ins->bind_param('ii', $ownId, $otherId);
     $ins->execute();
   }
   $ins->close();
@@ -610,7 +661,7 @@ function addGoal(int $userId, array $b): int {
   } catch (mysqli_sql_exception $e) {
     duplicateNameFail($e, 'goal');
   }
-  setGoalActivities($id, ownedActivityIds($userId, $b['activityIds'] ?? []));
+  syncBridge('lt_goal_activity', 'goal_id', $id, 'activity_id', ownedIdsIn('lt_activities', $userId, $b['activityIds'] ?? []));
   return $id;
 }
 
@@ -632,7 +683,7 @@ function updateGoal(int $userId, int $id, array $b): void {
   } catch (mysqli_sql_exception $e) {
     duplicateNameFail($e, 'goal');
   }
-  setGoalActivities($id, ownedActivityIds($userId, $b['activityIds'] ?? []));
+  syncBridge('lt_goal_activity', 'goal_id', $id, 'activity_id', ownedIdsIn('lt_activities', $userId, $b['activityIds'] ?? []));
 }
 
 function weekRange(): array {
@@ -750,6 +801,156 @@ function setDayStatus(int $userId, string $date, string $dayType, string $notes)
   $stmt->bind_param('issis', $userId, $date, $dayType, $applies, $notesVal);
   $stmt->execute();
   $stmt->close();
+}
+
+// ---- Phase 4: People, Shared Life, and Learning ----
+
+const LEARNING_MODES = ['Learn', 'Apply'];
+
+function listPeople(int $userId): array {
+  $stmt = db()->prepare('SELECT id, display_name, relationship_type, active FROM lt_people WHERE user_id = ? ORDER BY active DESC, display_name');
+  $stmt->bind_param('i', $userId);
+  $stmt->execute();
+  $res = $stmt->get_result();
+  $out = [];
+  while ($r = $res->fetch_assoc()) {
+    $out[] = [
+      'Id' => (int)$r['id'],
+      'DisplayName' => (string)$r['display_name'],
+      'RelationshipType' => (string)($r['relationship_type'] ?? ''),
+      'Active' => (bool)$r['active'],
+    ];
+  }
+  $stmt->close();
+  return $out;
+}
+
+function addPerson(int $userId, array $b): int {
+  $name = trim((string)($b['displayName'] ?? ''));
+  if ($name === '') { fail('Person name is required'); }
+  $rel = nullIfEmpty((string)($b['relationshipType'] ?? ''));
+  $stmt = db()->prepare('INSERT INTO lt_people (user_id, display_name, relationship_type) VALUES (?, ?, ?)');
+  $stmt->bind_param('iss', $userId, $name, $rel);
+  $stmt->execute();
+  $id = $stmt->insert_id;
+  $stmt->close();
+  return $id;
+}
+
+function updatePerson(int $userId, int $id, array $b): void {
+  $name = trim((string)($b['displayName'] ?? ''));
+  if ($name === '') { fail('Person name is required'); }
+  $rel = nullIfEmpty((string)($b['relationshipType'] ?? ''));
+  $active = !empty($b['active']) ? 1 : 0;
+  $stmt = db()->prepare('UPDATE lt_people SET display_name = ?, relationship_type = ?, active = ? WHERE id = ? AND user_id = ?');
+  $stmt->bind_param('ssiii', $name, $rel, $active, $id, $userId);
+  $stmt->execute();
+  $stmt->close();
+}
+
+function listTags(int $userId): array {
+  $stmt = db()->prepare('SELECT id, name, active FROM lt_tags WHERE user_id = ? ORDER BY active DESC, name');
+  $stmt->bind_param('i', $userId);
+  $stmt->execute();
+  $res = $stmt->get_result();
+  $out = [];
+  while ($r = $res->fetch_assoc()) {
+    $out[] = ['Id' => (int)$r['id'], 'Name' => (string)$r['name'], 'Active' => (bool)$r['active']];
+  }
+  $stmt->close();
+  return $out;
+}
+
+function addTag(int $userId, array $b): int {
+  $name = trim((string)($b['name'] ?? ''));
+  if ($name === '') { fail('Tag name is required'); }
+  try {
+    $stmt = db()->prepare('INSERT INTO lt_tags (user_id, name) VALUES (?, ?)');
+    $stmt->bind_param('is', $userId, $name);
+    $stmt->execute();
+    $id = $stmt->insert_id;
+    $stmt->close();
+    return $id;
+  } catch (mysqli_sql_exception $e) {
+    duplicateNameFail($e, 'tag');
+  }
+}
+
+function updateTag(int $userId, int $id, array $b): void {
+  $name = trim((string)($b['name'] ?? ''));
+  if ($name === '') { fail('Tag name is required'); }
+  $active = !empty($b['active']) ? 1 : 0;
+  try {
+    $stmt = db()->prepare('UPDATE lt_tags SET name = ?, active = ? WHERE id = ? AND user_id = ?');
+    $stmt->bind_param('siii', $name, $active, $id, $userId);
+    $stmt->execute();
+    $stmt->close();
+  } catch (mysqli_sql_exception $e) {
+    duplicateNameFail($e, 'tag');
+  }
+}
+
+function listLearningProjects(int $userId): array {
+  $stmt = db()->prepare('SELECT id, name, description, active FROM lt_learning_projects WHERE user_id = ? ORDER BY active DESC, name');
+  $stmt->bind_param('i', $userId);
+  $stmt->execute();
+  $res = $stmt->get_result();
+  $out = [];
+  while ($r = $res->fetch_assoc()) {
+    $out[] = [
+      'Id' => (int)$r['id'],
+      'Name' => (string)$r['name'],
+      'Description' => (string)($r['description'] ?? ''),
+      'Active' => (bool)$r['active'],
+    ];
+  }
+  $stmt->close();
+  return $out;
+}
+
+function addLearningProject(int $userId, array $b): int {
+  $name = trim((string)($b['name'] ?? ''));
+  if ($name === '') { fail('Learning project name is required'); }
+  $description = nullIfEmpty((string)($b['description'] ?? ''));
+  try {
+    $stmt = db()->prepare('INSERT INTO lt_learning_projects (user_id, name, description) VALUES (?, ?, ?)');
+    $stmt->bind_param('iss', $userId, $name, $description);
+    $stmt->execute();
+    $id = $stmt->insert_id;
+    $stmt->close();
+    return $id;
+  } catch (mysqli_sql_exception $e) {
+    duplicateNameFail($e, 'learning project');
+  }
+}
+
+function updateLearningProject(int $userId, int $id, array $b): void {
+  $name = trim((string)($b['name'] ?? ''));
+  if ($name === '') { fail('Learning project name is required'); }
+  $description = nullIfEmpty((string)($b['description'] ?? ''));
+  $active = !empty($b['active']) ? 1 : 0;
+  try {
+    $stmt = db()->prepare('UPDATE lt_learning_projects SET name = ?, description = ?, active = ? WHERE id = ? AND user_id = ?');
+    $stmt->bind_param('ssiii', $name, $description, $active, $id, $userId);
+    $stmt->execute();
+    $stmt->close();
+  } catch (mysqli_sql_exception $e) {
+    duplicateNameFail($e, 'learning project');
+  }
+}
+
+function sharedLifeSummary(int $userId): array {
+  [$weekStart, $weekEnd] = weekRange();
+  [$monthStart, $monthEnd] = monthRange();
+  $countIn = function (string $start, string $end) use ($userId) {
+    $stmt = db()->prepare('SELECT COUNT(*) FROM lt_activity_log WHERE user_id = ? AND shared_life = 1 AND activity_date BETWEEN ? AND ?');
+    $stmt->bind_param('iss', $userId, $start, $end);
+    $stmt->execute();
+    $c = (int)$stmt->get_result()->fetch_row()[0];
+    $stmt->close();
+    return $c;
+  };
+  return ['ThisWeek' => $countIn($weekStart, $weekEnd), 'ThisMonth' => $countIn($monthStart, $monthEnd)];
 }
 
 // ---- Router ----
@@ -976,6 +1177,74 @@ switch ($action) {
     if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) { fail('A valid date is required'); }
     setDayStatus((int)$user['id'], $date, (string)($body['dayType'] ?? 'Home'), (string)($body['notes'] ?? ''));
     respond(['ok' => true]);
+  }
+
+  // -- Phase 4: People --
+
+  case 'people': {
+    $user = requireMember();
+    respond(['ok' => true, 'people' => listPeople((int)$user['id'])]);
+  }
+
+  case 'addPerson': {
+    $user = requireMember();
+    $id = addPerson((int)$user['id'], $body);
+    respond(['ok' => true, 'id' => $id]);
+  }
+
+  case 'updatePerson': {
+    $user = requireMember();
+    $id = (int)($body['id'] ?? 0);
+    if ($id <= 0) { fail('Missing person id'); }
+    updatePerson((int)$user['id'], $id, $body);
+    respond(['ok' => true]);
+  }
+
+  // -- Phase 4: Tags --
+
+  case 'tags': {
+    $user = requireMember();
+    respond(['ok' => true, 'tags' => listTags((int)$user['id'])]);
+  }
+
+  case 'addTag': {
+    $user = requireMember();
+    $id = addTag((int)$user['id'], $body);
+    respond(['ok' => true, 'id' => $id]);
+  }
+
+  case 'updateTag': {
+    $user = requireMember();
+    $id = (int)($body['id'] ?? 0);
+    if ($id <= 0) { fail('Missing tag id'); }
+    updateTag((int)$user['id'], $id, $body);
+    respond(['ok' => true]);
+  }
+
+  // -- Phase 4: Learning Projects --
+
+  case 'learningProjects': {
+    $user = requireMember();
+    respond(['ok' => true, 'learningProjects' => listLearningProjects((int)$user['id'])]);
+  }
+
+  case 'addLearningProject': {
+    $user = requireMember();
+    $id = addLearningProject((int)$user['id'], $body);
+    respond(['ok' => true, 'id' => $id]);
+  }
+
+  case 'updateLearningProject': {
+    $user = requireMember();
+    $id = (int)($body['id'] ?? 0);
+    if ($id <= 0) { fail('Missing learning project id'); }
+    updateLearningProject((int)$user['id'], $id, $body);
+    respond(['ok' => true]);
+  }
+
+  case 'sharedLifeSummary': {
+    $user = requireMember();
+    respond(['ok' => true] + sharedLifeSummary((int)$user['id']));
   }
 
   default:

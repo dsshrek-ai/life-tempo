@@ -25,7 +25,7 @@
   <div id="content"><p class="note">Loading…</p></div>
 </main>
 
-<footer class="site-footer">Life Tempo — Phase 3: Goals, Cadence, and Weekly Progress</footer>
+<footer class="site-footer">Life Tempo — Phase 4: People, Shared Life, and Learning</footer>
 
 <script src="js/api.js"></script>
 <script>
@@ -34,6 +34,9 @@ const contentEl = document.getElementById('content');
 
 let ACTIVITIES = [];
 let LOCATIONS = [];
+let PEOPLE = [];
+let TAGS = [];
+let LEARNING_PROJECTS = [];
 let editingId = null;
 
 function showStatus(msg) {
@@ -115,6 +118,34 @@ function renderShell() {
           </div>
         </div>
 
+        <div class="form-grid">
+          <div>
+            <label for="f-people">With</label>
+            ${multiSelectHtml('f-people', PEOPLE.filter(p => p.Active), 'Id', 'DisplayName', [])}
+          </div>
+          <div>
+            <label for="f-tags">Tags</label>
+            ${multiSelectHtml('f-tags', TAGS.filter(t => t.Active), 'Id', 'Name', [])}
+          </div>
+        </div>
+
+        <div class="form-grid">
+          <div>
+            <label for="f-learning-project">Learning project</label>
+            <select id="f-learning-project">
+              <option value="">(none)</option>
+              ${optionsHtml(LEARNING_PROJECTS.filter(lp => lp.Active), 'Id', 'Name')}
+            </select>
+          </div>
+          <div>
+            <label for="f-learning-mode">Learning mode</label>
+            <select id="f-learning-mode">
+              <option value="Learn">Learn</option>
+              <option value="Apply">Apply</option>
+            </select>
+          </div>
+        </div>
+
         <label for="f-notes">Notes</label>
         <textarea id="f-notes"></textarea>
 
@@ -125,6 +156,10 @@ function renderShell() {
         <div class="checkline">
           <input type="checkbox" id="f-billable">
           <label for="f-billable">Billable</label>
+        </div>
+        <div class="checkline">
+          <input type="checkbox" id="f-shared-life">
+          <label for="f-shared-life">Shared Life (intentionally done together)</label>
         </div>
 
         <p>
@@ -173,7 +208,17 @@ function startEdit(entry) {
   document.getElementById('f-notes').value = entry.Notes || '';
   document.getElementById('f-productive').checked = !!entry.Productive;
   document.getElementById('f-billable').checked = !!entry.Billable;
+  document.getElementById('f-shared-life').checked = !!entry.SharedLife;
+  document.getElementById('f-learning-project').value = entry.LearningProjectId ?? '';
+  document.getElementById('f-learning-mode').value = entry.LearningMode || 'Learn';
+  setMultiSelectValues('f-people', entry.PersonIds || []);
+  setMultiSelectValues('f-tags', entry.TagIds || []);
   document.getElementById('edit-card').scrollIntoView({ behavior: 'smooth' });
+}
+
+function setMultiSelectValues(id, ids) {
+  const set = new Set((ids || []).map(String));
+  Array.from(document.getElementById(id).options).forEach(o => { o.selected = set.has(o.value); });
 }
 
 function closeEdit() {
@@ -208,6 +253,11 @@ async function onSubmit(ev) {
     notes: document.getElementById('f-notes').value,
     productive: document.getElementById('f-productive').checked,
     billable: document.getElementById('f-billable').checked,
+    sharedLife: document.getElementById('f-shared-life').checked,
+    learningProjectId: document.getElementById('f-learning-project').value,
+    learningMode: document.getElementById('f-learning-mode').value,
+    personIds: selectedValues(document.getElementById('f-people')),
+    tagIds: selectedValues(document.getElementById('f-tags')),
   };
   const btn = ev.target.querySelector('button[type="submit"]');
   btn.disabled = true;
@@ -235,9 +285,15 @@ async function loadEntries() {
 
 async function load() {
   try {
-    const [actRes, locRes] = await Promise.all([fetchData('activities'), fetchData('locations')]);
+    const [actRes, locRes, personRes, tagRes, lpRes] = await Promise.all([
+      fetchData('activities'), fetchData('locations'),
+      fetchData('people'), fetchData('tags'), fetchData('learningProjects'),
+    ]);
     ACTIVITIES = (actRes && actRes.activities) || [];
     LOCATIONS = (locRes && locRes.locations) || [];
+    PEOPLE = (personRes && personRes.people) || [];
+    TAGS = (tagRes && tagRes.tags) || [];
+    LEARNING_PROJECTS = (lpRes && lpRes.learningProjects) || [];
     renderShell();
     await loadEntries();
   } catch (e) {
