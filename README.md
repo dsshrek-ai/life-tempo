@@ -10,9 +10,17 @@ Full philosophy, conceptual model, MySQL spec, and phased roadmap:
 
 ## Status
 
-**Phase 1 — Foundation and Security** (see spec section 146). Login via My
-Apps Hub / MyDataWorld SSO, a tenant-safe API pattern, and a bare app shell.
-No activity logging yet — that's Phase 2.
+**Phase 2 — Core Activity Logging** (see spec section 146). Phase 1 (login via
+My Apps Hub / MyDataWorld SSO, tenant-safe API pattern) is done. Phase 2 adds:
+
+- **Manage** — Categories, Locations, and Activities (name, category, typical
+  duration, Productive/Billable-eligible flags, default location, Quick Log)
+- **Today** — Quick Log buttons for favorite activities, a full Log Activity
+  form, and today's entries
+- **History** — activity log filtered by activity and date range, with edit
+  and delete
+
+Goals, cadence, and the weekly dashboard are Phase 3.
 
 ## Stack
 

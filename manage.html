@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Manage | Life Tempo</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="bar">
+    <h1>🧭 Life Tempo</h1>
+    <nav>
+      <a href="index.html">Today</a>
+      <a href="history.html">History</a>
+      <a href="manage.html" aria-current="page">Manage</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <div id="status"></div>
+  <div id="content"><p class="note">Loading…</p></div>
+</main>
+
+<footer class="site-footer">Life Tempo — Phase 2: Core Activity Logging</footer>
+
+<script src="js/api.js"></script>
+<script>
+const statusEl = document.getElementById('status');
+const contentEl = document.getElementById('content');
+
+let CATEGORIES = [];
+let LOCATIONS = [];
+let ACTIVITIES = [];
+
+function showStatus(msg) {
+  if (!msg) { statusEl.style.display = 'none'; return; }
+  statusEl.textContent = msg;
+  statusEl.style.display = 'block';
+}
+
+function txt(col, value, opts) {
+  opts = opts || {};
+  const type = opts.type || 'text';
+  const v = value ?? '';
+  return `<input type="${type}" data-col="${col}" value="${escapeHtml(v)}" ${opts.attrs || ''}>`;
+}
+function chk(col, checked) {
+  return `<input type="checkbox" data-col="${col}" ${checked ? 'checked' : ''}>`;
+}
+function selectOptions(col, items, valueKey, labelKey, selected, blankLabel) {
+  const opts = (blankLabel !== undefined ? [`<option value="">${blankLabel}</option>`] : [])
+    .concat(items.map(i => `<option value="${i[valueKey]}" ${String(i[valueKey]) === String(selected) ? 'selected' : ''}>${escapeHtml(i[labelKey])}</option>`));
+  return `<select data-col="${col}">${opts.join('')}</select>`;
+}
+function readRow(tr) {
+  const out = {};
+  tr.querySelectorAll('[data-col]').forEach(el => {
+    const col = el.dataset.col;
+    out[col] = el.type === 'checkbox' ? el.checked : el.value;
+  });
+  return out;
+}
+
+// ---------------- Categories ----------------
+
+function renderCategories() {
+  const rows = CATEGORIES.map(c => `
+    <tr data-id="${c.Id}" class="${c.Active ? '' : 'inactive-row'}">
+      <td>${txt('name', c.Name)}</td>
+      <td>${txt('description', c.Description)}</td>
+      <td>${txt('sortOrder', c.SortOrder, { type: 'number' })}</td>
+      <td>${chk('active', c.Active)}</td>
+      <td><button class="btn" data-act="save-cat">Save</button></td>
+    </tr>`).join('');
+  const addRow = `
+    <tr id="add-cat">
+      <td>${txt('name', '')}</td>
+      <td>${txt('description', '')}</td>
+      <td>${txt('sortOrder', 0, { type: 'number' })}</td>
+      <td>${chk('active', true)}</td>
+      <td><button class="btn" data-act="add-cat">Add</button></td>
+    </tr>`;
+  return `
+    <div class="table-wrap">
+      <table class="grid">
+        <thead><tr><th>Name</th><th>Description</th><th>Sort</th><th>Active</th><th>Actions</th></tr></thead>
+        <tbody>${rows}${addRow}</tbody>
+      </table>
+    </div>`;
+}
+
+async function handleCategoryAction(btn) {
+  const act = btn.dataset.act;
+  const tr = btn.closest('tr');
+  const data = readRow(tr);
+  showStatus('');
+  if (!data.name.trim()) { showStatus('Category name is required.'); return; }
+  const payload = { name: data.name.trim(), description: data.description, sortOrder: Number(data.sortOrder) || 0, active: data.active };
+  btn.disabled = true;
+  try {
+    if (act === 'add-cat') {
+      await postAction('addCategory', payload);
+    } else {
+      await postAction('updateCategory', { id: Number(tr.dataset.id), ...payload });
+    }
+    await reloadAll();
+  } catch (e) {
+    showStatus(e.message === 'not-authorized' ? "You're not authorized to do that." : "Couldn't save that category.");
+    btn.disabled = false;
+  }
+}
+
+// ---------------- Locations ----------------
+
+function renderLocations() {
+  const rows = LOCATIONS.map(l => `
+    <tr data-id="${l.Id}" class="${l.Active ? '' : 'inactive-row'}">
+      <td>${txt('name', l.Name)}</td>
+      <td>${txt('locationType', l.LocationType)}</td>
+      <td>${txt('address', l.Address)}</td>
+      <td>${txt('city', l.City)}</td>
+      <td>${txt('stateRegion', l.StateRegion)}</td>
+      <td>${txt('phone', l.Phone)}</td>
+      <td>${txt('websiteUrl', l.WebsiteUrl, { type: 'url' })}</td>
+      <td>${chk('active', l.Active)}</td>
+      <td><button class="btn" data-act="save-loc">Save</button></td>
+    </tr>`).join('');
+  const addRow = `
+    <tr id="add-loc">
+      <td>${txt('name', '')}</td>
+      <td>${txt('locationType', '')}</td>
+      <td>${txt('address', '')}</td>
+      <td>${txt('city', '')}</td>
+      <td>${txt('stateRegion', '')}</td>
+      <td>${txt('phone', '')}</td>
+      <td>${txt('websiteUrl', '', { type: 'url' })}</td>
+      <td>${chk('active', true)}</td>
+      <td><button class="btn" data-act="add-loc">Add</button></td>
+    </tr>`;
+  return `
+    <div class="table-wrap">
+      <table class="grid">
+        <thead><tr><th>Name</th><th>Type</th><th>Address</th><th>City</th><th>State</th><th>Phone</th><th>Website</th><th>Active</th><th>Actions</th></tr></thead>
+        <tbody>${rows}${addRow}</tbody>
+      </table>
+    </div>`;
+}
+
+async function handleLocationAction(btn) {
+  const act = btn.dataset.act;
+  const tr = btn.closest('tr');
+  const data = readRow(tr);
+  showStatus('');
+  if (!data.name.trim()) { showStatus('Location name is required.'); return; }
+  btn.disabled = true;
+  try {
+    if (act === 'add-loc') {
+      await postAction('addLocation', data);
+    } else {
+      await postAction('updateLocation', { id: Number(tr.dataset.id), ...data });
+    }
+    await reloadAll();
+  } catch (e) {
+    showStatus("Couldn't save that location.");
+    btn.disabled = false;
+  }
+}
+
+// ---------------- Activities ----------------
+
+function renderActivities() {
+  const rows = ACTIVITIES.map(a => `
+    <tr data-id="${a.Id}" class="${a.Active ? '' : 'inactive-row'}">
+      <td>${txt('name', a.Name)}</td>
+      <td>${selectOptions('categoryId', CATEGORIES.filter(c => c.Active), 'Id', 'Name', a.CategoryId, '(none)')}</td>
+      <td>${txt('description', a.Description)}</td>
+      <td>${txt('typicalDurationMinutes', a.TypicalDurationMinutes, { type: 'number' })}</td>
+      <td>${chk('productive', a.Productive)}</td>
+      <td>${chk('billableEligible', a.BillableEligible)}</td>
+      <td>${selectOptions('defaultLocationId', LOCATIONS.filter(l => l.Active), 'Id', 'Name', a.DefaultLocationId, '(none)')}</td>
+      <td>${chk('quickLog', a.QuickLog)}</td>
+      <td>${chk('active', a.Active)}</td>
+      <td><button class="btn" data-act="save-act">Save</button></td>
+    </tr>`).join('');
+  const addRow = `
+    <tr id="add-act">
+      <td>${txt('name', '')}</td>
+      <td>${selectOptions('categoryId', CATEGORIES.filter(c => c.Active), 'Id', 'Name', '', '(none)')}</td>
+      <td>${txt('description', '')}</td>
+      <td>${txt('typicalDurationMinutes', '', { type: 'number' })}</td>
+      <td>${chk('productive', false)}</td>
+      <td>${chk('billableEligible', false)}</td>
+      <td>${selectOptions('defaultLocationId', LOCATIONS.filter(l => l.Active), 'Id', 'Name', '', '(none)')}</td>
+      <td>${chk('quickLog', false)}</td>
+      <td>${chk('active', true)}</td>
+      <td><button class="btn" data-act="add-act">Add</button></td>
+    </tr>`;
+  return `
+    <div class="table-wrap">
+      <table class="grid">
+        <thead><tr>
+          <th>Name</th><th>Category</th><th>Description</th><th>Typical min</th>
+          <th>Productive</th><th>Billable</th><th>Default location</th><th>Quick Log</th><th>Active</th><th>Actions</th>
+        </tr></thead>
+        <tbody>${rows}${addRow}</tbody>
+      </table>
+    </div>`;
+}
+
+async function handleActivityAction(btn) {
+  const act = btn.dataset.act;
+  const tr = btn.closest('tr');
+  const data = readRow(tr);
+  showStatus('');
+  if (!data.name.trim()) { showStatus('Activity name is required.'); return; }
+  btn.disabled = true;
+  try {
+    if (act === 'add-act') {
+      await postAction('addActivity', data);
+    } else {
+      await postAction('updateActivity', { id: Number(tr.dataset.id), ...data });
+    }
+    await reloadAll();
+  } catch (e) {
+    showStatus("Couldn't save that activity.");
+    btn.disabled = false;
+  }
+}
+
+// ---------------- Shell ----------------
+
+function render() {
+  contentEl.innerHTML = `
+    <div class="card">
+      <h3>Categories</h3>
+      <p class="note">Broad life areas (Health, Spiritual, Music, ...) used to group activities for later reporting.</p>
+      <div id="cat-table">${renderCategories()}</div>
+    </div>
+    <div class="card">
+      <h3>Locations</h3>
+      <p class="note">Reusable places an activity can happen at (Temple, Gym, Rehearsal Hall, ...).</p>
+      <div id="loc-table">${renderLocations()}</div>
+    </div>
+    <div class="card">
+      <h3>Activities</h3>
+      <p class="note">The things you actually log. Turn on Quick Log for the ones you do often — they'll get a one-tap button on Today.</p>
+      <div id="act-table">${renderActivities()}</div>
+    </div>
+  `;
+  contentEl.querySelectorAll('[data-act^="save-cat"], [data-act="add-cat"]').forEach(b => b.addEventListener('click', () => handleCategoryAction(b)));
+  contentEl.querySelectorAll('[data-act^="save-loc"], [data-act="add-loc"]').forEach(b => b.addEventListener('click', () => handleLocationAction(b)));
+  contentEl.querySelectorAll('[data-act^="save-act"], [data-act="add-act"]').forEach(b => b.addEventListener('click', () => handleActivityAction(b)));
+}
+
+async function reloadAll() {
+  const [catRes, locRes, actRes] = await Promise.all([fetchData('categories'), fetchData('locations'), fetchData('activities')]);
+  CATEGORIES = (catRes && catRes.categories) || [];
+  LOCATIONS = (locRes && locRes.locations) || [];
+  ACTIVITIES = (actRes && actRes.activities) || [];
+  render();
+}
+
+(async () => {
+  await captureSso();
+  try {
+    await reloadAll();
+  } catch (e) {
+    handleError(contentEl, e);
+  }
+})();
+</script>
+
+</body>
+</html>

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Today | Life Tempo</title>
+<title>History | Life Tempo</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -12,8 +12,8 @@
   <div class="bar">
     <h1>🧭 Life Tempo</h1>
     <nav>
-      <a href="index.html" aria-current="page">Today</a>
-      <a href="history.html">History</a>
+      <a href="index.html">Today</a>
+      <a href="history.html" aria-current="page">History</a>
       <a href="manage.html">Manage</a>
     </nav>
   </div>
@@ -41,44 +41,50 @@ function showStatus(msg) {
   statusEl.style.display = 'block';
 }
 
-function activeActivities() { return ACTIVITIES.filter(a => a.Active); }
 function activeLocations() { return LOCATIONS.filter(l => l.Active); }
 
 function optionsHtml(items, valueKey, labelKey, selected) {
   return items.map(i => `<option value="${i[valueKey]}" ${String(i[valueKey]) === String(selected) ? 'selected' : ''}>${escapeHtml(i[labelKey])}</option>`).join('');
 }
 
-function renderShell(todayEntries) {
-  const quickLogActivities = activeActivities().filter(a => a.QuickLog);
+function defaultFrom() {
+  const d = new Date();
+  d.setDate(d.getDate() - 30);
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
 
+function renderShell() {
   contentEl.innerHTML = `
-    ${ACTIVITIES.length === 0 ? `
-      <div class="note">
-        No activities yet — add one on <a href="manage.html">Manage</a> before you can log anything.
-      </div>` : ''}
-
-    ${quickLogActivities.length ? `
-      <div class="card">
-        <h3>Quick Log</h3>
-        <div class="quick-log-strip">
-          ${quickLogActivities.map(a => `<button type="button" class="btn accent" data-quick="${a.Id}">${escapeHtml(a.Name)} ✓</button>`).join('')}
-        </div>
-      </div>` : ''}
-
     <div class="card">
-      <h3 id="form-heading">Log an Activity</h3>
+      <h3>Filter</h3>
+      <div class="form-grid">
+        <div>
+          <label for="flt-activity">Activity</label>
+          <select id="flt-activity"><option value="">All activities</option>${optionsHtml(ACTIVITIES, 'Id', 'Name')}</select>
+        </div>
+        <div>
+          <label for="flt-from">From</label>
+          <input type="date" id="flt-from" value="${defaultFrom()}">
+        </div>
+        <div>
+          <label for="flt-to">To</label>
+          <input type="date" id="flt-to" value="${todayStr()}">
+        </div>
+      </div>
+      <p><button type="button" class="btn" id="flt-apply">Apply</button></p>
+    </div>
+
+    <div class="card" id="edit-card" style="display:none;">
+      <h3>Edit Entry</h3>
       <form id="log-form">
-        <input type="hidden" id="f-id">
         <label for="f-activity">Activity</label>
-        <select id="f-activity" required>
-          <option value="">Select an activity…</option>
-          ${optionsHtml(activeActivities(), 'Id', 'Name')}
-        </select>
+        <select id="f-activity" required>${optionsHtml(ACTIVITIES.filter(a => a.Active), 'Id', 'Name')}</select>
 
         <div class="form-grid">
           <div>
             <label for="f-date">Date</label>
-            <input type="date" id="f-date" value="${todayStr()}">
+            <input type="date" id="f-date">
           </div>
           <div>
             <label for="f-start">Start time</label>
@@ -122,53 +128,40 @@ function renderShell(todayEntries) {
 
         <p>
           <button type="submit" class="btn">Save</button>
-          <button type="button" class="btn secondary" id="f-cancel" style="display:none;">Cancel edit</button>
+          <button type="button" class="btn secondary" id="f-cancel">Cancel</button>
         </p>
       </form>
     </div>
 
     <div class="card">
-      <h3>Today</h3>
-      <div id="today-list"></div>
+      <div id="log-list"></div>
     </div>
   `;
 
-  contentEl.querySelectorAll('[data-quick]').forEach(btn => {
-    btn.addEventListener('click', () => quickLog(Number(btn.dataset.quick), btn));
-  });
-
-  document.getElementById('f-activity').addEventListener('change', onActivityPicked);
+  document.getElementById('flt-apply').addEventListener('click', loadEntries);
   document.getElementById('log-form').addEventListener('submit', onSubmit);
-  document.getElementById('f-cancel').addEventListener('click', resetForm);
-
-  renderTodayList(todayEntries);
+  document.getElementById('f-cancel').addEventListener('click', closeEdit);
 }
 
-function onActivityPicked() {
-  if (editingId) return; // don't clobber values while editing an existing entry
-  const id = Number(document.getElementById('f-activity').value);
-  const a = ACTIVITIES.find(x => x.Id === id);
-  if (!a) return;
-  document.getElementById('f-duration').value = a.TypicalDurationMinutes ?? '';
-  document.getElementById('f-location').value = a.DefaultLocationId ?? '';
-  document.getElementById('f-productive').checked = !!a.Productive;
-  document.getElementById('f-billable').checked = !!a.BillableEligible;
-}
-
-function renderTodayList(entries) {
-  const list = document.getElementById('today-list');
+function renderList(entries) {
+  const list = document.getElementById('log-list');
   list.innerHTML = '';
   if (!entries.length) {
-    list.innerHTML = '<p class="note">Nothing logged yet today.</p>';
+    list.innerHTML = '<p class="note">No activity logged in this range.</p>';
     return;
   }
-  entries.forEach(e => list.appendChild(logRowEl(e, startEdit, confirmDelete)));
+  groupByDate(entries).forEach(group => {
+    const heading = document.createElement('div');
+    heading.className = 'day-heading';
+    heading.textContent = formatDateHeading(group.date);
+    list.appendChild(heading);
+    group.entries.forEach(e => list.appendChild(logRowEl(e, startEdit, confirmDelete)));
+  });
 }
 
 function startEdit(entry) {
   editingId = entry.Id;
-  document.getElementById('form-heading').textContent = 'Edit Activity Log Entry';
-  document.getElementById('f-id').value = entry.Id;
+  document.getElementById('edit-card').style.display = 'block';
   document.getElementById('f-activity').value = entry.ActivityId;
   document.getElementById('f-date').value = entry.ActivityDate;
   document.getElementById('f-start').value = timeOnly(entry.StartTime);
@@ -179,24 +172,20 @@ function startEdit(entry) {
   document.getElementById('f-notes').value = entry.Notes || '';
   document.getElementById('f-productive').checked = !!entry.Productive;
   document.getElementById('f-billable').checked = !!entry.Billable;
-  document.getElementById('f-cancel').style.display = 'inline-block';
-  document.getElementById('form-heading').scrollIntoView({ behavior: 'smooth' });
+  document.getElementById('edit-card').scrollIntoView({ behavior: 'smooth' });
 }
 
-function resetForm() {
+function closeEdit() {
   editingId = null;
-  document.getElementById('form-heading').textContent = 'Log an Activity';
+  document.getElementById('edit-card').style.display = 'none';
   document.getElementById('log-form').reset();
-  document.getElementById('f-id').value = '';
-  document.getElementById('f-date').value = todayStr();
-  document.getElementById('f-cancel').style.display = 'none';
 }
 
 async function confirmDelete(entry) {
   if (!confirm(`Delete this "${entry.ActivityName}" entry? This cannot be undone.`)) return;
   try {
     await postAction('deleteActivityLog', { id: entry.Id });
-    await loadToday();
+    await loadEntries();
   } catch (e) {
     showStatus("Couldn't delete that entry. Try again.");
   }
@@ -204,11 +193,12 @@ async function confirmDelete(entry) {
 
 async function onSubmit(ev) {
   ev.preventDefault();
+  if (!editingId) return;
   const activityId = Number(document.getElementById('f-activity').value);
   if (!activityId) { showStatus('Choose an activity first.'); return; }
   const payload = {
     activityId,
-    activityDate: document.getElementById('f-date').value || todayStr(),
+    activityDate: document.getElementById('f-date').value,
     startTime: document.getElementById('f-start').value,
     endTime: document.getElementById('f-end').value,
     durationMinutes: document.getElementById('f-duration').value,
@@ -222,38 +212,24 @@ async function onSubmit(ev) {
   btn.disabled = true;
   showStatus('');
   try {
-    if (editingId) {
-      await postAction('updateActivityLog', { id: editingId, ...payload });
-      showStatus('Entry updated.');
-    } else {
-      await postAction('addActivityLog', payload);
-      showStatus('Logged.');
-    }
-    resetForm();
-    await loadToday();
+    await postAction('updateActivityLog', { id: editingId, ...payload });
+    showStatus('Entry updated.');
+    closeEdit();
+    await loadEntries();
   } catch (e) {
     showStatus("Couldn't save that entry. Try again.");
   }
   btn.disabled = false;
 }
 
-async function quickLog(activityId, btn) {
-  btn.disabled = true;
-  showStatus('');
-  try {
-    const res = await postAction('quickLog', { activityId });
-    showStatus(`Logged ${res.activityName}.`);
-    await loadToday();
-  } catch (e) {
-    showStatus("Couldn't quick-log that. Try again.");
-  }
-  btn.disabled = false;
-}
-
-async function loadToday() {
-  const today = todayStr();
-  const res = await fetchData('activityLog', { from: today, to: today });
-  renderShell((res && res.entries) || []);
+async function loadEntries() {
+  const from = document.getElementById('flt-from').value || defaultFrom();
+  const to = document.getElementById('flt-to').value || todayStr();
+  const activityId = document.getElementById('flt-activity').value;
+  const params = { from, to };
+  if (activityId) params.activityId = activityId;
+  const res = await fetchData('activityLog', params);
+  renderList((res && res.entries) || []);
 }
 
 async function load() {
@@ -261,7 +237,8 @@ async function load() {
     const [actRes, locRes] = await Promise.all([fetchData('activities'), fetchData('locations')]);
     ACTIVITIES = (actRes && actRes.activities) || [];
     LOCATIONS = (locRes && locRes.locations) || [];
-    await loadToday();
+    renderShell();
+    await loadEntries();
   } catch (e) {
     handleError(contentEl, e);
   }

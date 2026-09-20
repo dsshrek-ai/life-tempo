@@ -1,10 +1,10 @@
-# Setup Guide — Phase 1
+# Setup Guide
 
 Life Tempo is backed by **MyDataWorld** — the same shared database and single
 sign-on as My Apps Hub. Every request needs a MyDataWorld login with an
-`app_access` grant for `life-tempo`. Phase 1 adds no domain tables of its own
-yet (see `docs/life-tempo-spec.md` section 146) — this just wires up login and
-a tenant-safe API shell.
+`app_access` grant for `life-tempo`.
+
+If you already completed Phase 1 setup, jump to **[Phase 2 update](#phase-2-update)** below — steps 1-6 here are the original Phase 1 walkthrough and don't need repeating.
 
 ## 1. Register the app with My Apps Hub
 
@@ -69,3 +69,21 @@ saves it as the Bearer credential, and strips it from the URL.
 
 Every successful action upserts a row into the shared `app_usage_log`
 (`app_key = 'life-tempo'`), one row per day.
+
+## Phase 2 update
+
+Phase 2 adds Categories, Locations, Activities, and the Activity Log itself —
+the Today/History/Manage screens.
+
+1. In phpMyAdmin, run `api/schema.sql` again. It's all `CREATE TABLE IF NOT
+   EXISTS`, so it only adds the four new tables (`lt_categories`,
+   `lt_locations`, `lt_activities`, `lt_activity_log`) and won't touch
+   anything Phase 1 already created.
+2. Re-upload `api/api.php` (unchanged `config.php`) to
+   `seniorfamily.org/life-tempo-api/` — it now has the Category/Location/
+   Activity/ActivityLog actions alongside the Phase 1 auth actions.
+3. Push/pull the updated front end (`index.html`, `history.html`,
+   `manage.html`, `js/api.js`, `style.css`) to GitHub Pages as usual.
+4. Open the app, go to **Manage**, and add at least one Category and
+   Activity — Today and History have nothing to show until an Activity
+   exists.

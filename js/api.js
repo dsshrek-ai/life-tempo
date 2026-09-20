@@ -20,9 +20,10 @@ function authHeaders() {
   return t ? { Authorization: `Bearer ${t}` } : {};
 }
 
-async function fetchData(action) {
+async function fetchData(action, params) {
   if (!isConfigured()) throw new Error('not-configured');
-  const res = await fetch(`${CONFIG.API_URL}?action=${encodeURIComponent(action)}`, { headers: authHeaders() });
+  const qs = new URLSearchParams({ action, ...(params || {}) });
+  const res = await fetch(`${CONFIG.API_URL}?${qs.toString()}`, { headers: authHeaders() });
   if (res.status === 401 || res.status === 403) throw new Error('not-authorized');
   if (!res.ok) throw new Error(`Request failed: ${res.status}`);
   return res.json();
@@ -125,4 +126,116 @@ function captureSso() {
 // fetchData()/postAction() shape used here.
 async function ping() {
   return fetchData('ping');
+}
+
+// ---- Phase 2 shared helpers (Today / History / Manage) ----
+
+function todayStr() {
+  const d = new Date();
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+// A MySQL DATETIME string ("2026-09-20 14:30:00") -> "14:30" for a <input
+// type=time>, or '' if null/empty.
+function timeOnly(dateTimeStr) {
+  if (!dateTimeStr) return '';
+  const m = String(dateTimeStr).match(/(\d{2}:\d{2})/);
+  return m ? m[1] : '';
+}
+
+function formatTime12h(dateTimeStr) {
+  const t = timeOnly(dateTimeStr);
+  if (!t) return '';
+  let [h, m] = t.split(':').map(Number);
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  h = h % 12 || 12;
+  return `${h}:${String(m).padStart(2, '0')} ${ampm}`;
+}
+
+function formatDuration(minutes) {
+  if (minutes === null || minutes === undefined || minutes === '') return '';
+  const m = Number(minutes);
+  if (!m) return '0 min';
+  const h = Math.floor(m / 60);
+  const rem = m % 60;
+  if (h && rem) return `${h} hr ${rem} min`;
+  if (h) return `${h} hr`;
+  return `${rem} min`;
+}
+
+function formatDateHeading(dateStr) {
+  const [y, mo, d] = dateStr.split('-').map(Number);
+  const dt = new Date(y, mo - 1, d);
+  const today = todayStr();
+  const yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
+  const pad = n => String(n).padStart(2, '0');
+  const yStr = `${yesterday.getFullYear()}-${pad(yesterday.getMonth() + 1)}-${pad(yesterday.getDate())}`;
+  if (dateStr === today) return 'Today';
+  if (dateStr === yStr) return 'Yesterday';
+  return dt.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
+}
+
+function formatMoney(amount) {
+  if (amount === null || amount === undefined || amount === '') return '';
+  return '$' + Number(amount).toFixed(2);
+}
+
+// Renders one activity log entry as a .log-row element. `onEdit`/`onDelete`
+// are called with the entry when their buttons are clicked.
+function logRowEl(entry, onEdit, onDelete) {
+  const row = document.createElement('div');
+  row.className = 'log-row';
+
+  const timeBits = [];
+  if (entry.StartTime) timeBits.push(formatTime12h(entry.StartTime) + (entry.EndTime ? '–' + formatTime12h(entry.EndTime) : ''));
+  if (entry.DurationMinutes !== null) timeBits.push(formatDuration(entry.DurationMinutes));
+  if (entry.LocationName) timeBits.push(entry.LocationName);
+  if (entry.CostAmount !== null) timeBits.push(formatMoney(entry.CostAmount));
+
+  const main = document.createElement('div');
+  main.className = 'lr-main';
+  main.innerHTML = `
+    <div class="lr-activity">${escapeHtml(entry.ActivityName)}
+      ${entry.Productive ? '<span class="badge productive">Productive</span>' : ''}
+      ${entry.Billable ? '<span class="badge billable">Billable</span>' : ''}
+    </div>
+    <div class="lr-meta">${escapeHtml(timeBits.join(' · '))}</div>
+    ${entry.Notes ? `<div class="lr-notes">${escapeHtml(entry.Notes)}</div>` : ''}
+  `;
+
+  const actions = document.createElement('div');
+  actions.className = 'lr-actions';
+  const editBtn = document.createElement('button');
+  editBtn.type = 'button';
+  editBtn.className = 'btn secondary';
+  editBtn.textContent = 'Edit';
+  editBtn.addEventListener('click', () => onEdit(entry));
+  const delBtn = document.createElement('button');
+  delBtn.type = 'button';
+  delBtn.className = 'btn secondary';
+  delBtn.textContent = 'Delete';
+  delBtn.addEventListener('click', () => onDelete(entry));
+  actions.appendChild(editBtn);
+  actions.appendChild(delBtn);
+
+  row.appendChild(main);
+  row.appendChild(actions);
+  return row;
+}
+
+// Groups activity log entries (already sorted newest-date-first by the API)
+// into a list of { date, entries } for rendering under day headings.
+function groupByDate(entries) {
+  const groups = [];
+  let current = null;
+  for (const e of entries) {
+    if (!current || current.date !== e.ActivityDate) {
+      current = { date: e.ActivityDate, entries: [] };
+      groups.push(current);
+    }
+    current.entries.push(e);
+  }
+  return groups;
 }
