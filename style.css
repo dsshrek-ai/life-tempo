@@ -113,7 +113,7 @@ input[type="date"], input[type="time"], input[type="url"], select, textarea {
 textarea { max-width: 100%; min-height: 3.5rem; resize: vertical; }
 .checkline { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.8rem; }
 .checkline label { margin: 0; font-weight: normal; }
-.checkline input[type="checkbox"] { width: auto; }
+.checkline input[type="checkbox"] { width: auto; flex-shrink: 0; }
 
 .form-grid {
   display: grid;

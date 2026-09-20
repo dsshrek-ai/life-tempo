@@ -200,3 +200,17 @@ or Billable/Invoice off per user.
 4. On **Manage → Settings**, turn off Travel and/or Billable/Invoice for any
    login that doesn't need them. Nothing already entered is deleted, and
    the hidden nav links/fields come right back if turned on again.
+
+## Billing rate update
+
+Adds a Billing Rate to Clients so Cost can be calculated instead of typed.
+
+1. In phpMyAdmin, run `api/schema.sql` again — one plain `ALTER TABLE
+   lt_clients ADD COLUMN billing_rate ...` — **not idempotent**, skip it if
+   you already ran this block once.
+2. Re-upload `api/api.php`.
+3. Push/pull the updated front end.
+4. On **Manage → Clients**, set a Billing Rate ($/hr) for a client. On
+   Today/History, picking that client on a log entry shows the rate with a
+   **Calculate from rate** button that fills Cost from the entry's duration
+   (or start/end time) — you can still edit the result by hand afterward.

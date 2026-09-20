@@ -433,6 +433,7 @@ function renderClients() {
     <tr data-id="${c.Id}" class="${c.Active ? '' : 'inactive-row'}">
       <td>${txt('name', c.Name)}</td>
       <td>${txt('notes', c.Notes)}</td>
+      <td>${txt('billingRate', c.BillingRate, { type: 'number', attrs: 'step="0.01" min="0" placeholder="$/hr"' })}</td>
       <td>${chk('active', c.Active)}</td>
       <td><button class="btn" data-act="save-client">Save</button></td>
     </tr>`).join('');
@@ -440,13 +441,14 @@ function renderClients() {
     <tr id="add-client">
       <td>${txt('name', '')}</td>
       <td>${txt('notes', '')}</td>
+      <td>${txt('billingRate', '', { type: 'number', attrs: 'step="0.01" min="0" placeholder="$/hr"' })}</td>
       <td>${chk('active', true)}</td>
       <td><button class="btn" data-act="add-client">Add</button></td>
     </tr>`;
   return `
     <div class="table-wrap">
       <table class="grid">
-        <thead><tr><th>Name</th><th>Notes</th><th>Active</th><th>Actions</th></tr></thead>
+        <thead><tr><th>Name</th><th>Notes</th><th>Billing Rate ($/hr)</th><th>Active</th><th>Actions</th></tr></thead>
         <tbody>${rows}${addRow}</tbody>
       </table>
     </div>`;

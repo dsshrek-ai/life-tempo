@@ -161,6 +161,7 @@ function renderShell() {
               <option value="">(none)</option>
               ${optionsHtml(CLIENTS.filter(c => c.Active), 'Id', 'Name')}
             </select>
+            <p id="f-rate-hint" class="note" style="display:none; margin-top:0.4rem; padding:0.5rem;"></p>
           </div>` : ''}
         </div>
 
@@ -196,6 +197,46 @@ function renderShell() {
   document.getElementById('flt-export').addEventListener('click', exportCsv);
   document.getElementById('log-form').addEventListener('submit', onSubmit);
   document.getElementById('f-cancel').addEventListener('click', closeEdit);
+  if (PREFS.ShowBillable) document.getElementById('f-client').addEventListener('change', updateRateHint);
+}
+
+// Shows the selected client's rate (if any) with a button that fills Cost
+// from the entry's duration -- avoids a separate WorkProject/rate table by
+// reusing the Client's own rate and whatever duration is already entered.
+function updateRateHint() {
+  const hint = document.getElementById('f-rate-hint');
+  if (!hint) return;
+  const clientId = Number(document.getElementById('f-client').value);
+  const client = CLIENTS.find(c => c.Id === clientId);
+  if (!client || client.BillingRate === null) {
+    hint.style.display = 'none';
+    hint.innerHTML = '';
+    return;
+  }
+  hint.style.display = 'block';
+  hint.innerHTML = `${formatMoney(client.BillingRate)}/hr &middot; <button type="button" class="btn secondary" id="f-rate-calc" style="font-size:0.8rem; padding:0.25rem 0.5rem;">Calculate from rate</button>`;
+  document.getElementById('f-rate-calc').addEventListener('click', () => applyRateToCost(client.BillingRate));
+}
+
+function currentDurationMinutes() {
+  const durationVal = document.getElementById('f-duration').value;
+  if (durationVal) return Number(durationVal);
+  const start = document.getElementById('f-start').value;
+  const end = document.getElementById('f-end').value;
+  if (start && end) {
+    const [sh, sm] = start.split(':').map(Number);
+    const [eh, em] = end.split(':').map(Number);
+    const mins = (eh * 60 + em) - (sh * 60 + sm);
+    return mins > 0 ? mins : null;
+  }
+  return null;
+}
+
+function applyRateToCost(rate) {
+  const minutes = currentDurationMinutes();
+  if (minutes === null) { showStatus('Enter a duration or start/end time first.'); return; }
+  document.getElementById('f-cost').value = ((minutes / 60) * rate).toFixed(2);
+  showStatus('');
 }
 
 function exportCsv() {
@@ -251,7 +292,7 @@ function startEdit(entry) {
   document.getElementById('f-shared-life').checked = !!entry.SharedLife;
   document.getElementById('f-learning-project').value = entry.LearningProjectId ?? '';
   document.getElementById('f-learning-mode').value = entry.LearningMode || 'Learn';
-  if (PREFS.ShowBillable) document.getElementById('f-client').value = entry.ClientId ?? '';
+  if (PREFS.ShowBillable) { document.getElementById('f-client').value = entry.ClientId ?? ''; updateRateHint(); }
   setMultiSelectValues('f-people', entry.PersonIds || []);
   setMultiSelectValues('f-tags', entry.TagIds || []);
   document.getElementById('edit-card').scrollIntoView({ behavior: 'smooth' });
@@ -266,6 +307,7 @@ function closeEdit() {
   editingId = null;
   document.getElementById('edit-card').style.display = 'none';
   document.getElementById('log-form').reset();
+  if (PREFS.ShowBillable) updateRateHint();
 }
 
 async function confirmDelete(entry) {

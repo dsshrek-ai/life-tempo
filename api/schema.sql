@@ -423,6 +423,15 @@ CREATE TABLE IF NOT EXISTS lt_user_preferences (
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 ) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- ---------- Client billing rate ----------
+-- An hourly rate so a log entry's Cost can be calculated from its duration
+-- (Manage > Clients > Billing Rate, then "Calculate from rate" on the
+-- Today/History log form) instead of always typed by hand. Nullable --
+-- a client with no rate just means the calculate button has nothing to
+-- work from and the user still types Cost manually. Run once.
+ALTER TABLE lt_clients
+  ADD COLUMN billing_rate DECIMAL(12,2) NULL AFTER notes;
+
 -- ============================================================
 -- BOOTSTRAP (run once, after you've signed up through My Apps Hub):
 --
@@ -460,4 +469,8 @@ CREATE TABLE IF NOT EXISTS lt_user_preferences (
 -- 9) If you don't need Travel or Billable/Invoice tracking, turn either
 --    off on Manage's Settings section -- it hides the related nav links
 --    and fields without deleting anything already entered.
+--
+-- 10) Give a client a Billing Rate on Manage's Clients section, then use
+--     "Calculate from rate" next to Cost on the Today/History log form to
+--     fill it in from that entry's duration instead of typing it by hand.
 -- ============================================================

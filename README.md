@@ -45,6 +45,14 @@ right back. This is UI-only, not an access boundary (a personal/family app
 doesn't need one user blocked from a URL, just an uncluttered nav for the
 areas they don't use) — see `api/schema.sql`'s `lt_user_preferences` comment.
 
+## Billing rate
+
+A Client (Manage) can carry an hourly **Billing Rate**. On the Today/History
+log form, picking a client with a rate shows it plus a **Calculate from
+rate** button that fills Cost from that entry's duration (or start/end time)
+— a plain multiplication, not a persisted calculation, so the result can
+still be edited by hand afterward for a flat fee or a one-off adjustment.
+
 ## Next
 
 There is no Phase 8 in the spec — Phase 7 is the end of the documented

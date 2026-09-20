@@ -1414,25 +1414,36 @@ function setDayStatusRange(int $userId, string $from, string $to, string $dayTyp
 // ---- Phase 7: Clients (billable-work reporting) ----
 
 function listClients(int $userId): array {
-  $stmt = db()->prepare('SELECT id, name, notes, active FROM lt_clients WHERE user_id = ? ORDER BY active DESC, name');
+  $stmt = db()->prepare('SELECT id, name, notes, billing_rate, active FROM lt_clients WHERE user_id = ? ORDER BY active DESC, name');
   $stmt->bind_param('i', $userId);
   $stmt->execute();
   $res = $stmt->get_result();
   $out = [];
   while ($r = $res->fetch_assoc()) {
-    $out[] = ['Id' => (int)$r['id'], 'Name' => (string)$r['name'], 'Notes' => (string)($r['notes'] ?? ''), 'Active' => (bool)$r['active']];
+    $out[] = [
+      'Id' => (int)$r['id'],
+      'Name' => (string)$r['name'],
+      'Notes' => (string)($r['notes'] ?? ''),
+      'BillingRate' => $r['billing_rate'] !== null ? (float)$r['billing_rate'] : null,
+      'Active' => (bool)$r['active'],
+    ];
   }
   $stmt->close();
   return $out;
+}
+
+function clientBillingRate(array $b): ?float {
+  return (isset($b['billingRate']) && $b['billingRate'] !== '') ? max(0.0, (float)$b['billingRate']) : null;
 }
 
 function addClient(int $userId, array $b): int {
   $name = trim((string)($b['name'] ?? ''));
   if ($name === '') { fail('Client name is required'); }
   $notes = nullIfEmpty((string)($b['notes'] ?? ''));
+  $billingRate = clientBillingRate($b);
   try {
-    $stmt = db()->prepare('INSERT INTO lt_clients (user_id, name, notes) VALUES (?, ?, ?)');
-    $stmt->bind_param('iss', $userId, $name, $notes);
+    $stmt = db()->prepare('INSERT INTO lt_clients (user_id, name, notes, billing_rate) VALUES (?, ?, ?, ?)');
+    $stmt->bind_param('issd', $userId, $name, $notes, $billingRate);
     $stmt->execute();
     $id = $stmt->insert_id;
     $stmt->close();
@@ -1446,10 +1457,11 @@ function updateClient(int $userId, int $id, array $b): void {
   $name = trim((string)($b['name'] ?? ''));
   if ($name === '') { fail('Client name is required'); }
   $notes = nullIfEmpty((string)($b['notes'] ?? ''));
+  $billingRate = clientBillingRate($b);
   $active = !empty($b['active']) ? 1 : 0;
   try {
-    $stmt = db()->prepare('UPDATE lt_clients SET name = ?, notes = ?, active = ? WHERE id = ? AND user_id = ?');
-    $stmt->bind_param('ssiii', $name, $notes, $active, $id, $userId);
+    $stmt = db()->prepare('UPDATE lt_clients SET name = ?, notes = ?, billing_rate = ?, active = ? WHERE id = ? AND user_id = ?');
+    $stmt->bind_param('ssdiii', $name, $notes, $billingRate, $active, $id, $userId);
     $stmt->execute();
     $stmt->close();
   } catch (mysqli_sql_exception $e) {
