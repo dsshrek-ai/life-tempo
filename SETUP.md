@@ -4,7 +4,7 @@ Life Tempo is backed by **MyDataWorld** — the same shared database and single
 sign-on as My Apps Hub. Every request needs a MyDataWorld login with an
 `app_access` grant for `life-tempo`.
 
-If you already completed Phase 1 setup, jump to **[Phase 2 update](#phase-2-update)** below — steps 1-6 here are the original Phase 1 walkthrough and don't need repeating.
+If you already completed Phase 1 setup, jump to **[Phase 3 update](#phase-3-update)** below — steps 1-6 here are the original Phase 1 walkthrough and don't need repeating.
 
 ## 1. Register the app with My Apps Hub
 
@@ -87,3 +87,22 @@ the Today/History/Manage screens.
 4. Open the app, go to **Manage**, and add at least one Category and
    Activity — Today and History have nothing to show until an Activity
    exists.
+
+## Phase 3 update
+
+Phase 3 adds Goals, a weekly/monthly Dashboard, and a day-type control on
+Today.
+
+1. In phpMyAdmin, run `api/schema.sql` again — it only adds `lt_goals`,
+   `lt_goal_activity`, and `lt_day_status` (`CREATE TABLE IF NOT EXISTS`,
+   same as before).
+2. Re-upload `api/api.php` to `seniorfamily.org/life-tempo-api/` — it now
+   has the Goal/DayStatus actions alongside Phases 1-2.
+3. Push/pull the updated front end (`index.html`, `dashboard.html` is new,
+   `manage.html`, `js/api.js`, `style.css`).
+4. On **Manage**, add a goal (e.g. "Exercise" / Target / Weekly / 5) and
+   link it to the activities that should count toward it. Check
+   **Dashboard** for its progress.
+5. On **Today**, the "Today is a:" selector defaults to Home — only change
+   it on days that shouldn't count toward Daily-cadence goals (Travel,
+   Vacation, Sick, ...).

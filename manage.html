@@ -14,6 +14,7 @@
     <nav>
       <a href="index.html">Today</a>
       <a href="history.html">History</a>
+      <a href="dashboard.html">Dashboard</a>
       <a href="manage.html" aria-current="page">Manage</a>
     </nav>
   </div>
@@ -24,7 +25,7 @@
   <div id="content"><p class="note">Loading…</p></div>
 </main>
 
-<footer class="site-footer">Life Tempo — Phase 2: Core Activity Logging</footer>
+<footer class="site-footer">Life Tempo — Phase 3: Goals, Cadence, and Weekly Progress</footer>
 
 <script src="js/api.js"></script>
 <script>
@@ -34,6 +35,10 @@ const contentEl = document.getElementById('content');
 let CATEGORIES = [];
 let LOCATIONS = [];
 let ACTIVITIES = [];
+let GOALS = [];
+
+const GOAL_TYPE_OPTS = ['Minimum', 'Target', 'Maximum', 'TrackOnly'];
+const CADENCE_TYPE_OPTS = ['Daily', 'Weekly', 'Monthly'];
 
 function showStatus(msg) {
   if (!msg) { statusEl.style.display = 'none'; return; }
@@ -55,11 +60,21 @@ function selectOptions(col, items, valueKey, labelKey, selected, blankLabel) {
     .concat(items.map(i => `<option value="${i[valueKey]}" ${String(i[valueKey]) === String(selected) ? 'selected' : ''}>${escapeHtml(i[labelKey])}</option>`));
   return `<select data-col="${col}">${opts.join('')}</select>`;
 }
+function plainSelect(col, options, selected) {
+  return `<select data-col="${col}">${options.map(o => `<option value="${o}" ${o === selected ? 'selected' : ''}>${o}</option>`).join('')}</select>`;
+}
+function multiSelectOptions(col, items, valueKey, labelKey, selectedIds) {
+  const selectedSet = new Set((selectedIds || []).map(String));
+  const opts = items.map(i => `<option value="${i[valueKey]}" ${selectedSet.has(String(i[valueKey])) ? 'selected' : ''}>${escapeHtml(i[labelKey])}</option>`).join('');
+  return `<select data-col="${col}" multiple size="${Math.min(5, Math.max(3, items.length))}">${opts}</select>`;
+}
 function readRow(tr) {
   const out = {};
   tr.querySelectorAll('[data-col]').forEach(el => {
     const col = el.dataset.col;
-    out[col] = el.type === 'checkbox' ? el.checked : el.value;
+    if (el.type === 'checkbox') { out[col] = el.checked; }
+    else if (el.type === 'select-multiple') { out[col] = Array.from(el.selectedOptions).map(o => o.value); }
+    else { out[col] = el.value; }
   });
   return out;
 }
@@ -230,6 +245,69 @@ async function handleActivityAction(btn) {
   }
 }
 
+// ---------------- Goals ----------------
+
+function renderGoals() {
+  const activeActivities = ACTIVITIES.filter(a => a.Active);
+  const rows = GOALS.map(g => `
+    <tr data-id="${g.Id}" class="${g.Active ? '' : 'inactive-row'}">
+      <td>${txt('name', g.Name)}</td>
+      <td>${plainSelect('goalType', GOAL_TYPE_OPTS, g.GoalType)}</td>
+      <td>${plainSelect('cadenceType', CADENCE_TYPE_OPTS, g.CadenceType)}</td>
+      <td>${txt('targetValue', g.TargetValue, { type: 'number', attrs: 'step="0.5" min="0"' })}</td>
+      <td>${multiSelectOptions('activityIds', activeActivities, 'Id', 'Name', g.ActivityIds)}</td>
+      <td>${chk('active', g.Active)}</td>
+      <td><button class="btn" data-act="save-goal">Save</button></td>
+    </tr>`).join('');
+  const addRow = `
+    <tr id="add-goal">
+      <td>${txt('name', '')}</td>
+      <td>${plainSelect('goalType', GOAL_TYPE_OPTS, 'Target')}</td>
+      <td>${plainSelect('cadenceType', CADENCE_TYPE_OPTS, 'Weekly')}</td>
+      <td>${txt('targetValue', '', { type: 'number', attrs: 'step="0.5" min="0"' })}</td>
+      <td>${multiSelectOptions('activityIds', activeActivities, 'Id', 'Name', [])}</td>
+      <td>${chk('active', true)}</td>
+      <td><button class="btn" data-act="add-goal">Add</button></td>
+    </tr>`;
+  return `
+    <div class="table-wrap">
+      <table class="grid">
+        <thead><tr>
+          <th>Name</th><th>Type</th><th>Cadence</th><th>Target</th><th>Counts activities</th><th>Active</th><th>Actions</th>
+        </tr></thead>
+        <tbody>${rows}${addRow}</tbody>
+      </table>
+    </div>`;
+}
+
+async function handleGoalAction(btn) {
+  const act = btn.dataset.act;
+  const tr = btn.closest('tr');
+  const data = readRow(tr);
+  showStatus('');
+  if (!data.name.trim()) { showStatus('Goal name is required.'); return; }
+  const payload = {
+    name: data.name.trim(),
+    goalType: data.goalType,
+    cadenceType: data.cadenceType,
+    targetValue: data.targetValue,
+    activityIds: data.activityIds,
+    active: data.active,
+  };
+  btn.disabled = true;
+  try {
+    if (act === 'add-goal') {
+      await postAction('addGoal', payload);
+    } else {
+      await postAction('updateGoal', { id: Number(tr.dataset.id), ...payload });
+    }
+    await reloadAll();
+  } catch (e) {
+    showStatus("Couldn't save that goal.");
+    btn.disabled = false;
+  }
+}
+
 // ---------------- Shell ----------------
 
 function render() {
@@ -249,17 +327,26 @@ function render() {
       <p class="note">The things you actually log. Turn on Quick Log for the ones you do often — they'll get a one-tap button on Today.</p>
       <div id="act-table">${renderActivities()}</div>
     </div>
+    <div class="card">
+      <h3>Goals</h3>
+      <p class="note">Compare actual activity against an intended rhythm (e.g. "Exercise 5 per week"). Link a goal to the activities that should count toward it, then check <a href="dashboard.html">Dashboard</a> for progress. Ctrl/Cmd-click to select multiple activities.</p>
+      <div id="goal-table">${renderGoals()}</div>
+    </div>
   `;
   contentEl.querySelectorAll('[data-act^="save-cat"], [data-act="add-cat"]').forEach(b => b.addEventListener('click', () => handleCategoryAction(b)));
   contentEl.querySelectorAll('[data-act^="save-loc"], [data-act="add-loc"]').forEach(b => b.addEventListener('click', () => handleLocationAction(b)));
   contentEl.querySelectorAll('[data-act^="save-act"], [data-act="add-act"]').forEach(b => b.addEventListener('click', () => handleActivityAction(b)));
+  contentEl.querySelectorAll('[data-act^="save-goal"], [data-act="add-goal"]').forEach(b => b.addEventListener('click', () => handleGoalAction(b)));
 }
 
 async function reloadAll() {
-  const [catRes, locRes, actRes] = await Promise.all([fetchData('categories'), fetchData('locations'), fetchData('activities')]);
+  const [catRes, locRes, actRes, goalRes] = await Promise.all([
+    fetchData('categories'), fetchData('locations'), fetchData('activities'), fetchData('goals'),
+  ]);
   CATEGORIES = (catRes && catRes.categories) || [];
   LOCATIONS = (locRes && locRes.locations) || [];
   ACTIVITIES = (actRes && actRes.activities) || [];
+  GOALS = (goalRes && goalRes.goals) || [];
   render();
 }
 

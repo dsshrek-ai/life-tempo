@@ -10,17 +10,19 @@ Full philosophy, conceptual model, MySQL spec, and phased roadmap:
 
 ## Status
 
-**Phase 2 — Core Activity Logging** (see spec section 146). Phase 1 (login via
-My Apps Hub / MyDataWorld SSO, tenant-safe API pattern) is done. Phase 2 adds:
+**Phase 3 — Goals, Cadence, and Weekly Progress** (see spec section 146).
+Phases 1 (login/tenant-safe API) and 2 (Categories, Locations, Activities,
+Today/History activity logging) are done. Phase 3 adds:
 
-- **Manage** — Categories, Locations, and Activities (name, category, typical
-  duration, Productive/Billable-eligible flags, default location, Quick Log)
-- **Today** — Quick Log buttons for favorite activities, a full Log Activity
-  form, and today's entries
-- **History** — activity log filtered by activity and date range, with edit
-  and delete
+- **Manage → Goals** — name, type (Minimum/Target/Maximum/TrackOnly), cadence
+  (Daily/Weekly/Monthly), target value, and which activities count toward it
+- **Dashboard** — current-week progress for Daily/Weekly goals and
+  current-month progress for Monthly goals, with a status badge and bar
+- **Today → day type** — mark today Home/Local Outing/Travel/Vacation/Sick/
+  Special Event so Daily-cadence goals don't expect activity on days that
+  aren't "home days"
 
-Goals, cadence, and the weekly dashboard are Phase 3.
+Phase 4 (people, shared life, learning) is next.
 
 ## Stack
 

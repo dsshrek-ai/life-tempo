@@ -14,6 +14,7 @@
     <nav>
       <a href="index.html" aria-current="page">Today</a>
       <a href="history.html">History</a>
+      <a href="dashboard.html">Dashboard</a>
       <a href="manage.html">Manage</a>
     </nav>
   </div>
@@ -24,7 +25,7 @@
   <div id="content"><p class="note">Loading…</p></div>
 </main>
 
-<footer class="site-footer">Life Tempo — Phase 2: Core Activity Logging</footer>
+<footer class="site-footer">Life Tempo — Phase 3: Goals, Cadence, and Weekly Progress</footer>
 
 <script src="js/api.js"></script>
 <script>
@@ -34,6 +35,9 @@ const contentEl = document.getElementById('content');
 let ACTIVITIES = [];
 let LOCATIONS = [];
 let editingId = null;
+let DAY_STATUS = { DayType: 'Home' };
+
+const DAY_TYPES = ['Home', 'Local Outing', 'Travel', 'Vacation', 'Sick', 'Special Event'];
 
 function showStatus(msg) {
   if (!msg) { statusEl.style.display = 'none'; return; }
@@ -56,6 +60,15 @@ function renderShell(todayEntries) {
       <div class="note">
         No activities yet — add one on <a href="manage.html">Manage</a> before you can log anything.
       </div>` : ''}
+
+    <div class="card">
+      <div style="display:flex; align-items:center; gap:0.6rem; flex-wrap:wrap;">
+        <strong>Today is a:</strong>
+        <select id="day-type">${DAY_TYPES.map(t => `<option value="${t}" ${t === DAY_STATUS.DayType ? 'selected' : ''}>${t}</option>`).join('')}</select>
+        <button type="button" class="btn secondary" id="day-save">Save</button>
+      </div>
+      <p class="note" style="margin-top:0.6rem;">Travel/Vacation/Sick days won't count against Daily-cadence goals like practice or exercise (see Dashboard).</p>
+    </div>
 
     ${quickLogActivities.length ? `
       <div class="card">
@@ -140,6 +153,7 @@ function renderShell(todayEntries) {
   document.getElementById('f-activity').addEventListener('change', onActivityPicked);
   document.getElementById('log-form').addEventListener('submit', onSubmit);
   document.getElementById('f-cancel').addEventListener('click', resetForm);
+  document.getElementById('day-save').addEventListener('click', onSaveDayStatus);
 
   renderTodayList(todayEntries);
 }
@@ -237,6 +251,21 @@ async function onSubmit(ev) {
   btn.disabled = false;
 }
 
+async function onSaveDayStatus() {
+  const btn = document.getElementById('day-save');
+  const dayType = document.getElementById('day-type').value;
+  btn.disabled = true;
+  showStatus('');
+  try {
+    await postAction('setDayStatus', { date: todayStr(), dayType });
+    DAY_STATUS.DayType = dayType;
+    showStatus('Day status saved.');
+  } catch (e) {
+    showStatus("Couldn't save that. Try again.");
+  }
+  btn.disabled = false;
+}
+
 async function quickLog(activityId, btn) {
   btn.disabled = true;
   showStatus('');
@@ -258,9 +287,10 @@ async function loadToday() {
 
 async function load() {
   try {
-    const [actRes, locRes] = await Promise.all([fetchData('activities'), fetchData('locations')]);
+    const [actRes, locRes, dayRes] = await Promise.all([fetchData('activities'), fetchData('locations'), fetchData('dayStatus')]);
     ACTIVITIES = (actRes && actRes.activities) || [];
     LOCATIONS = (locRes && locRes.locations) || [];
+    DAY_STATUS = dayRes || { DayType: 'Home' };
     await loadToday();
   } catch (e) {
     handleError(contentEl, e);

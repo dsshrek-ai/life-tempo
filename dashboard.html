@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dashboard | Life Tempo</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="bar">
+    <h1>🧭 Life Tempo</h1>
+    <nav>
+      <a href="index.html">Today</a>
+      <a href="history.html">History</a>
+      <a href="dashboard.html" aria-current="page">Dashboard</a>
+      <a href="manage.html">Manage</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <div id="status"></div>
+  <div id="content"><p class="note">Loading…</p></div>
+</main>
+
+<footer class="site-footer">Life Tempo — Phase 3: Goals, Cadence, and Weekly Progress</footer>
+
+<script src="js/api.js"></script>
+<script>
+const statusEl = document.getElementById('status');
+const contentEl = document.getElementById('content');
+
+function showStatus(msg) {
+  if (!msg) { statusEl.style.display = 'none'; return; }
+  statusEl.textContent = msg;
+  statusEl.style.display = 'block';
+}
+
+function render(progress) {
+  if (!progress.length) {
+    contentEl.innerHTML = `
+      <div class="note">
+        No active goals yet. Add one on <a href="manage.html">Manage</a> and link it to the
+        activities that should count toward it (e.g. "Exercise 5 per week" linked to your
+        Gym/Walk activities).
+      </div>`;
+    return;
+  }
+  const weekly = progress.filter(p => p.CadenceType !== 'Monthly');
+  const monthly = progress.filter(p => p.CadenceType === 'Monthly');
+  contentEl.innerHTML = `
+    <div class="card">
+      <h3>This Week</h3>
+      <div id="weekly-goals">${weekly.length ? '' : '<p class="note">No weekly or daily goals.</p>'}</div>
+    </div>
+    ${monthly.length ? `
+      <div class="card">
+        <h3>This Month</h3>
+        <div id="monthly-goals"></div>
+      </div>` : ''}
+  `;
+  const weeklyEl = document.getElementById('weekly-goals');
+  weekly.forEach(p => weeklyEl.appendChild(goalCardEl(p)));
+  if (monthly.length) {
+    const monthlyEl = document.getElementById('monthly-goals');
+    monthly.forEach(p => monthlyEl.appendChild(goalCardEl(p)));
+  }
+}
+
+async function load() {
+  try {
+    const res = await fetchData('goalProgress');
+    render((res && res.progress) || []);
+  } catch (e) {
+    handleError(contentEl, e);
+  }
+}
+
+(async () => {
+  await captureSso();
+  await load();
+})();
+</script>
+
+</body>
+</html>

@@ -123,6 +123,53 @@ CREATE TABLE IF NOT EXISTS lt_activity_log (
   FOREIGN KEY (location_id) REFERENCES lt_locations(id) ON DELETE SET NULL
 ) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- ---------- PHASE 3: Goals, Cadence, and Weekly Progress ----------
+-- Goal / GoalActivity / DayStatus, trimmed the same way Phase 2 was: no
+-- weight or unit_type columns yet (those are Phase 5 engagement-scoring
+-- concerns) -- every initial retirement rhythm in spec section 39 is a
+-- plain per-period count, so goal progress is computed as a count of
+-- qualifying lt_activity_log rows against target_value.
+
+CREATE TABLE IF NOT EXISTS lt_goals (
+  id            INT AUTO_INCREMENT PRIMARY KEY,
+  user_id       INT NOT NULL,
+  name          VARCHAR(150) NOT NULL,
+  goal_type     VARCHAR(20) NOT NULL,   -- Minimum | Target | Maximum | TrackOnly
+  cadence_type  VARCHAR(20) NOT NULL,   -- Daily | Weekly | Monthly
+  target_value  DECIMAL(10,2) NULL,
+  active        TINYINT(1) NOT NULL DEFAULT 1,
+  created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_lt_goals_user_name (user_id, name),
+  KEY ix_lt_goals_user (user_id, active),
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS lt_goal_activity (
+  goal_id      INT NOT NULL,
+  activity_id  INT NOT NULL,
+  PRIMARY KEY (goal_id, activity_id),
+  KEY ix_lt_goal_activity_activity (activity_id, goal_id),
+  FOREIGN KEY (goal_id) REFERENCES lt_goals(id) ON DELETE CASCADE,
+  FOREIGN KEY (activity_id) REFERENCES lt_activities(id) ON DELETE CASCADE
+) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Whether a day counts toward daily-cadence goal expectations (spec section
+-- 13/62). No row for a date means "applicable" -- you only add a row to
+-- mark an exception (Travel/Vacation/Sick/...).
+CREATE TABLE IF NOT EXISTS lt_day_status (
+  id                        INT AUTO_INCREMENT PRIMARY KEY,
+  user_id                   INT NOT NULL,
+  calendar_date             DATE NOT NULL,
+  day_type                  VARCHAR(20) NOT NULL,  -- Home | Local Outing | Travel | Vacation | Sick | Special Event
+  productive_goal_applies   TINYINT(1) NOT NULL DEFAULT 1,
+  notes                     VARCHAR(500) NULL,
+  created_at                TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at                TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_lt_day_status_user_date (user_id, calendar_date),
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- ============================================================
 -- BOOTSTRAP (run once, after you've signed up through My Apps Hub):
 --
@@ -136,4 +183,7 @@ CREATE TABLE IF NOT EXISTS lt_activity_log (
 --
 -- 3) Open Manage in the app and add at least one Category and Activity
 --    before Today/History have anything to show.
+--
+-- 4) On Manage's Goals section, add a goal and link it to the activities
+--    that should count toward it, then check Dashboard for its progress.
 -- ============================================================

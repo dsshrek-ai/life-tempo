@@ -125,6 +125,20 @@ textarea { max-width: 100%; min-height: 3.5rem; resize: vertical; }
 .badge.productive { background: #ded1ee; color: var(--accent-dark); }
 .badge.billable { background: #f6e6cf; color: var(--amber); }
 .badge.inactive { background: #e6dde5; color: var(--muted); }
+.badge.met, .badge.within-limit { background: #d9ecd6; color: var(--green); }
+.badge.behind { background: #f6e6cf; color: var(--amber); }
+.badge.over { background: #f6d6d6; color: #a13a3a; }
+.badge.tracked { background: #ded1ee; color: var(--accent-dark); }
+
+/* ---- goal progress ---- */
+.goal-card { padding: 0.9rem 1.1rem; border-bottom: 1px solid var(--border); }
+.goal-card:last-child { border-bottom: none; }
+.goal-card .gc-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.4rem; }
+.goal-card .gc-name { font-weight: bold; }
+.goal-card .gc-meta { color: var(--muted); font-size: 0.85rem; margin-top: 0.15rem; }
+.progress-track { background: var(--tint); border-radius: 999px; height: 0.6rem; margin-top: 0.5rem; overflow: hidden; }
+.progress-fill { background: var(--accent); height: 100%; border-radius: 999px; }
+.progress-fill.over { background: #c25b5b; }
 
 /* ---- quick log strip ---- */
 .quick-log-strip { display: flex; flex-wrap: wrap; gap: 0.5rem; }

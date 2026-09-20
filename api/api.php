@@ -12,6 +12,15 @@
 // and the ActivityLog itself, all scoped by the same requireMember()-derived
 // UserID, and any category/location reference is re-validated as owned by
 // that user via ownedId() before it's written.
+//
+// Phase 3 (Goals, Cadence, and Weekly Progress) adds Goals (linked to the
+// activities that count toward them via lt_goal_activity) and DayStatus
+// (marks a date as Travel/Vacation/etc. so Daily-cadence goals don't expect
+// activity on days that aren't "home days" -- spec section 13/62).
+// computeGoalProgress() is the whole weekly-dashboard calculation: it always
+// evaluates the current week for Daily/Weekly goals and the current month
+// for Monthly goals, so there's no persisted "snapshot" table yet (spec
+// section 79 -- add one later only if live calculation proves too slow).
 
 require_once __DIR__ . '/config.php';
 
@@ -520,6 +529,229 @@ function quickLogActivity(int $userId, int $activityId): array {
   return ['id' => $id, 'activityName' => $activity['name']];
 }
 
+// ---- Phase 3: Goals, Cadence, and Weekly Progress ----
+
+const GOAL_TYPES = ['Minimum', 'Target', 'Maximum', 'TrackOnly'];
+const CADENCE_TYPES = ['Daily', 'Weekly', 'Monthly'];
+const DAY_TYPES = ['Home', 'Local Outing', 'Travel', 'Vacation', 'Sick', 'Special Event'];
+
+function normEnum(string $v, array $allowed, string $default): string {
+  foreach ($allowed as $a) { if (strcasecmp($a, $v) === 0) { return $a; } }
+  return $default;
+}
+
+function listGoals(int $userId): array {
+  $stmt = db()->prepare(
+    'SELECT g.id, g.name, g.goal_type, g.cadence_type, g.target_value, g.active,
+            GROUP_CONCAT(ga.activity_id) AS activity_ids
+     FROM lt_goals g
+     LEFT JOIN lt_goal_activity ga ON ga.goal_id = g.id
+     WHERE g.user_id = ?
+     GROUP BY g.id
+     ORDER BY g.active DESC, g.name'
+  );
+  $stmt->bind_param('i', $userId);
+  $stmt->execute();
+  $res = $stmt->get_result();
+  $out = [];
+  while ($r = $res->fetch_assoc()) {
+    $out[] = [
+      'Id' => (int)$r['id'],
+      'Name' => (string)$r['name'],
+      'GoalType' => (string)$r['goal_type'],
+      'CadenceType' => (string)$r['cadence_type'],
+      'TargetValue' => $r['target_value'] !== null ? (float)$r['target_value'] : null,
+      'Active' => (bool)$r['active'],
+      'ActivityIds' => $r['activity_ids'] ? array_map('intval', explode(',', $r['activity_ids'])) : [],
+    ];
+  }
+  $stmt->close();
+  return $out;
+}
+
+function ownedActivityIds(int $userId, $ids): array {
+  if (!is_array($ids)) { return []; }
+  $out = [];
+  foreach ($ids as $id) {
+    $owned = ownedId('lt_activities', (int)$id, $userId);
+    if ($owned !== null) { $out[] = $owned; }
+  }
+  return array_values(array_unique($out));
+}
+
+function setGoalActivities(int $goalId, array $activityIds): void {
+  $del = db()->prepare('DELETE FROM lt_goal_activity WHERE goal_id = ?');
+  $del->bind_param('i', $goalId);
+  $del->execute();
+  $del->close();
+  if (!$activityIds) { return; }
+  $ins = db()->prepare('INSERT INTO lt_goal_activity (goal_id, activity_id) VALUES (?, ?)');
+  foreach ($activityIds as $activityId) {
+    $ins->bind_param('ii', $goalId, $activityId);
+    $ins->execute();
+  }
+  $ins->close();
+}
+
+function addGoal(int $userId, array $b): int {
+  $name = trim((string)($b['name'] ?? ''));
+  if ($name === '') { fail('Goal name is required'); }
+  $goalType = normEnum((string)($b['goalType'] ?? ''), GOAL_TYPES, 'TrackOnly');
+  $cadenceType = normEnum((string)($b['cadenceType'] ?? ''), CADENCE_TYPES, 'Weekly');
+  $targetValue = (isset($b['targetValue']) && $b['targetValue'] !== '') ? (float)$b['targetValue'] : null;
+  try {
+    $stmt = db()->prepare(
+      'INSERT INTO lt_goals (user_id, name, goal_type, cadence_type, target_value) VALUES (?, ?, ?, ?, ?)'
+    );
+    $stmt->bind_param('isssd', $userId, $name, $goalType, $cadenceType, $targetValue);
+    $stmt->execute();
+    $id = $stmt->insert_id;
+    $stmt->close();
+  } catch (mysqli_sql_exception $e) {
+    duplicateNameFail($e, 'goal');
+  }
+  setGoalActivities($id, ownedActivityIds($userId, $b['activityIds'] ?? []));
+  return $id;
+}
+
+function updateGoal(int $userId, int $id, array $b): void {
+  $name = trim((string)($b['name'] ?? ''));
+  if ($name === '') { fail('Goal name is required'); }
+  $goalType = normEnum((string)($b['goalType'] ?? ''), GOAL_TYPES, 'TrackOnly');
+  $cadenceType = normEnum((string)($b['cadenceType'] ?? ''), CADENCE_TYPES, 'Weekly');
+  $targetValue = (isset($b['targetValue']) && $b['targetValue'] !== '') ? (float)$b['targetValue'] : null;
+  $active = !empty($b['active']) ? 1 : 0;
+  try {
+    $stmt = db()->prepare(
+      'UPDATE lt_goals SET name = ?, goal_type = ?, cadence_type = ?, target_value = ?, active = ?
+       WHERE id = ? AND user_id = ?'
+    );
+    $stmt->bind_param('sssdiii', $name, $goalType, $cadenceType, $targetValue, $active, $id, $userId);
+    $stmt->execute();
+    $stmt->close();
+  } catch (mysqli_sql_exception $e) {
+    duplicateNameFail($e, 'goal');
+  }
+  setGoalActivities($id, ownedActivityIds($userId, $b['activityIds'] ?? []));
+}
+
+function weekRange(): array {
+  $today = new DateTime('today');
+  $dow = (int)$today->format('N'); // 1 = Monday .. 7 = Sunday
+  $start = (clone $today)->modify('-' . ($dow - 1) . ' days');
+  $end = (clone $start)->modify('+6 days');
+  return [$start->format('Y-m-d'), $end->format('Y-m-d')];
+}
+
+function monthRange(): array {
+  $first = new DateTime('first day of this month');
+  $last = new DateTime('last day of this month');
+  return [$first->format('Y-m-d'), $last->format('Y-m-d')];
+}
+
+function applicableDaysInRange(string $start, string $end, int $userId): int {
+  $total = (int)(new DateTime($start))->diff(new DateTime($end))->days + 1;
+  $stmt = db()->prepare(
+    'SELECT COUNT(*) FROM lt_day_status
+     WHERE user_id = ? AND calendar_date BETWEEN ? AND ? AND productive_goal_applies = 0'
+  );
+  $stmt->bind_param('iss', $userId, $start, $end);
+  $stmt->execute();
+  $excluded = (int)$stmt->get_result()->fetch_row()[0];
+  $stmt->close();
+  return max(0, $total - $excluded);
+}
+
+function goalActualCount(int $userId, array $activityIds, string $start, string $end): int {
+  if (!$activityIds) { return 0; }
+  $placeholders = implode(',', array_fill(0, count($activityIds), '?'));
+  $types = 'iss' . str_repeat('i', count($activityIds));
+  $params = array_merge([$userId, $start, $end], $activityIds);
+  $stmt = db()->prepare(
+    "SELECT COUNT(*) FROM lt_activity_log
+     WHERE user_id = ? AND activity_date BETWEEN ? AND ? AND activity_id IN ($placeholders)"
+  );
+  $stmt->bind_param($types, ...$params);
+  $stmt->execute();
+  $count = (int)$stmt->get_result()->fetch_row()[0];
+  $stmt->close();
+  return $count;
+}
+
+function computeGoalProgress(int $userId): array {
+  $goals = array_filter(listGoals($userId), fn($g) => $g['Active']);
+  [$weekStart, $weekEnd] = weekRange();
+  [$monthStart, $monthEnd] = monthRange();
+  $out = [];
+  foreach ($goals as $g) {
+    $isMonthly = $g['CadenceType'] === 'Monthly';
+    [$start, $end] = $isMonthly ? [$monthStart, $monthEnd] : [$weekStart, $weekEnd];
+    $target = $g['TargetValue'] ?? 0;
+    $expected = $target;
+    if ($g['CadenceType'] === 'Daily') {
+      $expected = $target * applicableDaysInRange($start, $end, $userId);
+    }
+    $actual = goalActualCount($userId, $g['ActivityIds'], $start, $end);
+
+    if ($g['GoalType'] === 'TrackOnly') {
+      $status = 'Tracked';
+      $percent = $expected > 0 ? min(100.0, round($actual / $expected * 100)) : ($actual > 0 ? 100.0 : 0.0);
+    } elseif ($g['GoalType'] === 'Maximum') {
+      $percent = $expected > 0 ? round($actual / $expected * 100) : 0.0;
+      $status = $actual <= $expected ? 'Within limit' : 'Over';
+    } else { // Minimum or Target
+      $percent = $expected > 0 ? min(100.0, round($actual / $expected * 100)) : ($actual > 0 ? 100.0 : 0.0);
+      $status = $actual >= $expected ? 'Met' : 'Behind';
+    }
+
+    $out[] = [
+      'GoalId' => $g['Id'],
+      'Name' => $g['Name'],
+      'GoalType' => $g['GoalType'],
+      'CadenceType' => $g['CadenceType'],
+      'PeriodStart' => $start,
+      'PeriodEnd' => $end,
+      'Actual' => $actual,
+      'Expected' => $expected,
+      'Percent' => $percent,
+      'Status' => $status,
+      'HasActivities' => !empty($g['ActivityIds']),
+    ];
+  }
+  return $out;
+}
+
+function getDayStatus(int $userId, string $date): array {
+  $stmt = db()->prepare('SELECT day_type, productive_goal_applies, notes FROM lt_day_status WHERE user_id = ? AND calendar_date = ?');
+  $stmt->bind_param('is', $userId, $date);
+  $stmt->execute();
+  $row = $stmt->get_result()->fetch_assoc();
+  $stmt->close();
+  if (!$row) {
+    return ['DayType' => 'Home', 'ProductiveGoalApplies' => true, 'Notes' => '', 'IsSet' => false];
+  }
+  return [
+    'DayType' => $row['day_type'],
+    'ProductiveGoalApplies' => (bool)$row['productive_goal_applies'],
+    'Notes' => (string)($row['notes'] ?? ''),
+    'IsSet' => true,
+  ];
+}
+
+function setDayStatus(int $userId, string $date, string $dayType, string $notes): void {
+  $dayType = normEnum($dayType, DAY_TYPES, 'Home');
+  $applies = in_array($dayType, ['Home', 'Local Outing'], true) ? 1 : 0;
+  $notesVal = nullIfEmpty($notes);
+  $stmt = db()->prepare(
+    'INSERT INTO lt_day_status (user_id, calendar_date, day_type, productive_goal_applies, notes)
+     VALUES (?, ?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE day_type = VALUES(day_type), productive_goal_applies = VALUES(productive_goal_applies), notes = VALUES(notes)'
+  );
+  $stmt->bind_param('issis', $userId, $date, $dayType, $applies, $notesVal);
+  $stmt->execute();
+  $stmt->close();
+}
+
 // ---- Router ----
 
 $method = $_SERVER['REQUEST_METHOD'];
@@ -701,6 +933,49 @@ switch ($action) {
     if ($activityId <= 0) { fail('Missing activity id'); }
     $result = quickLogActivity((int)$user['id'], $activityId);
     respond(['ok' => true, 'id' => $result['id'], 'activityName' => $result['activityName']]);
+  }
+
+  // -- Phase 3: Goals --
+
+  case 'goals': {
+    $user = requireMember();
+    respond(['ok' => true, 'goals' => listGoals((int)$user['id'])]);
+  }
+
+  case 'addGoal': {
+    $user = requireMember();
+    $id = addGoal((int)$user['id'], $body);
+    respond(['ok' => true, 'id' => $id]);
+  }
+
+  case 'updateGoal': {
+    $user = requireMember();
+    $id = (int)($body['id'] ?? 0);
+    if ($id <= 0) { fail('Missing goal id'); }
+    updateGoal((int)$user['id'], $id, $body);
+    respond(['ok' => true]);
+  }
+
+  case 'goalProgress': {
+    $user = requireMember();
+    respond(['ok' => true, 'progress' => computeGoalProgress((int)$user['id'])]);
+  }
+
+  // -- Phase 3: Day Status --
+
+  case 'dayStatus': {
+    $user = requireMember();
+    $date = trim((string)($_GET['date'] ?? ''));
+    if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) { $date = date('Y-m-d'); }
+    respond(['ok' => true, 'date' => $date] + getDayStatus((int)$user['id'], $date));
+  }
+
+  case 'setDayStatus': {
+    $user = requireMember();
+    $date = trim((string)($body['date'] ?? ''));
+    if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) { fail('A valid date is required'); }
+    setDayStatus((int)$user['id'], $date, (string)($body['dayType'] ?? 'Home'), (string)($body['notes'] ?? ''));
+    respond(['ok' => true]);
   }
 
   default:

@@ -225,6 +225,34 @@ function logRowEl(entry, onEdit, onDelete) {
   return row;
 }
 
+// ---- Phase 3 shared helpers (Dashboard / Today's day-status) ----
+
+function goalStatusClass(status) {
+  return String(status).toLowerCase().replace(/[^a-z]+/g, '-').replace(/(^-|-$)/g, '');
+}
+
+function goalCardEl(p) {
+  const card = document.createElement('div');
+  card.className = 'goal-card';
+  const cadenceLabel = p.CadenceType + (p.CadenceType !== 'Monthly' ? ' (this week)' : ' (this month)');
+  const expected = Number(p.Expected);
+  const actual = Number(p.Actual);
+  const barPercent = Math.max(0, Math.min(100, p.Percent));
+  const overBar = p.GoalType === 'Maximum' && actual > expected;
+  card.innerHTML = `
+    <div class="gc-head">
+      <span class="gc-name">${escapeHtml(p.Name)}</span>
+      <span class="badge ${goalStatusClass(p.Status)}">${escapeHtml(p.Status)}</span>
+    </div>
+    <div class="gc-meta">
+      ${cadenceLabel} · ${p.GoalType} · ${actual} of ${expected}
+      ${!p.HasActivities ? ' · <em>no activities linked yet</em>' : ''}
+    </div>
+    <div class="progress-track"><div class="progress-fill ${overBar ? 'over' : ''}" style="width:${barPercent}%"></div></div>
+  `;
+  return card;
+}
+
 // Groups activity log entries (already sorted newest-date-first by the API)
 // into a list of { date, entries } for rendering under day headings.
 function groupByDate(entries) {
