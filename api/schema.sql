@@ -1,0 +1,23 @@
+-- ============================================================
+-- Life Tempo -- schema for MyDataWorld
+-- Phase 1 (Foundation and Security) intentionally adds no domain tables.
+-- It reuses the shared platform tables that already exist in MyDataWorld
+-- from My Apps Hub / T-Minus / Choir Connect / Reading List:
+--   users, sessions, apps, app_access, app_usage_log
+-- Life Tempo's own tables (Category, Activity, Location, ActivityLog, ...)
+-- start arriving in Phase 2 -- see docs/life-tempo-spec.md section 146.
+--
+-- The one thing to run here in Phase 1 is registering the app with the Hub:
+-- see the "NEW APP: Life Tempo" block appended to My Apps Hub's own
+-- api/schema.sql, and run that in phpMyAdmin. Then grant yourself access:
+--
+--   INSERT INTO app_access (user_id, app_id)
+--   SELECT u.id, a.id FROM users u JOIN apps a ON a.app_key = 'life-tempo'
+--   WHERE u.username = 'you@example.com'
+--   ON DUPLICATE KEY UPDATE user_id = user_id;
+--
+-- Tenant-safety convention every future Life Tempo table follows (spec
+-- section 92-94): every user-owned table gets a UserID column, every
+-- read/write is scoped by BOTH the record's own primary key AND the
+-- authenticated UserID -- never by primary key alone.
+-- ============================================================

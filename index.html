@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Life Tempo</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="bar">
+    <h1>🧭 Life Tempo</h1>
+    <nav>
+      <a href="index.html" aria-current="page">Today</a>
+      <a href="#" class="disabled" title="Coming in a later phase">Log</a>
+      <a href="#" class="disabled" title="Coming in a later phase">Goals</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <div id="content">
+    <p class="note">Loading…</p>
+  </div>
+</main>
+
+<footer class="site-footer">Life Tempo — Phase 1: Foundation and Security</footer>
+
+<script src="js/api.js"></script>
+<script>
+async function init() {
+  await captureSso();
+  const content = document.getElementById('content');
+  try {
+    const res = await ping();
+    content.innerHTML = `
+      <div class="card">
+        <h2>You're in.</h2>
+        <p>Logged in as <strong>${escapeHtml(res.displayName || '(no display name)')}</strong> (UserID ${res.userId}).</p>
+        <p class="note">
+          Phase 1 is just the foundation: login via My Apps Hub's shared MyDataWorld
+          account, a tenant-safe API pattern (every action resolves your UserID from
+          the session token server-side), and this app shell. Activity logging, goals,
+          and the rest of Life Tempo arrive in the phases after this one — see
+          <code>docs/life-tempo-spec.md</code>.
+        </p>
+      </div>`;
+  } catch (err) {
+    handleError(content, err);
+  }
+}
+init();
+</script>
+
+</body>
+</html>
