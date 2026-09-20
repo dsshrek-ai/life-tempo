@@ -263,6 +263,70 @@ ALTER TABLE lt_activity_log
 ALTER TABLE lt_goals
   ADD COLUMN weight DECIMAL(6,3) NOT NULL DEFAULT 1.000 AFTER target_value;
 
+-- ---------- PHASE 6: Planning, Seasons, and Calendar-Friendly Behavior ----------
+-- Templates (spec section 29/51) are skipped -- Activity's existing
+-- QuickLog flag (Phase 2) already gives one-tap logging; multiple named
+-- presets per activity haven't proven necessary yet (spec section 147.2 --
+-- let real usage decide before building further). ExceptionPeriod (spec
+-- section 31/56) is folded into the existing lt_day_status mechanism
+-- (Phase 3) rather than a separate table -- "mark this date range as
+-- Vacation" bulk-writes one lt_day_status row per day, reusing the
+-- exclusion logic Daily-cadence goals already respect instead of
+-- maintaining two overlapping day-exclusion concepts.
+
+-- Recurs annually by month-day (e.g. '11-01' to '12-24' for a Christmas
+-- choir season) -- a season tied to specific calendar years is a rarer
+-- case, left for later if it comes up.
+CREATE TABLE IF NOT EXISTS lt_seasons (
+  id              INT AUTO_INCREMENT PRIMARY KEY,
+  user_id         INT NOT NULL,
+  name            VARCHAR(150) NOT NULL,
+  start_month_day CHAR(5) NOT NULL,
+  end_month_day   CHAR(5) NOT NULL,
+  active          TINYINT(1) NOT NULL DEFAULT 1,
+  created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_lt_seasons_user_name (user_id, name),
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- A goal with no rows here is always active (unaffected). A goal with any
+-- rows here is only active/scored while today falls within one of its
+-- linked seasons (spec section 55: seasonal goal activation).
+CREATE TABLE IF NOT EXISTS lt_goal_season (
+  goal_id    INT NOT NULL,
+  season_id  INT NOT NULL,
+  PRIMARY KEY (goal_id, season_id),
+  KEY ix_lt_goal_season_season (season_id, goal_id),
+  FOREIGN KEY (goal_id) REFERENCES lt_goals(id) ON DELETE CASCADE,
+  FOREIGN KEY (season_id) REFERENCES lt_seasons(id) ON DELETE CASCADE
+) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS lt_planned_events (
+  id              INT AUTO_INCREMENT PRIMARY KEY,
+  user_id         INT NOT NULL,
+  activity_id     INT NULL,
+  title           VARCHAR(200) NOT NULL,
+  start_datetime  DATETIME NOT NULL,
+  end_datetime    DATETIME NULL,
+  location_id     INT NULL,
+  status          VARCHAR(20) NOT NULL DEFAULT 'Planned', -- Planned | Completed | Cancelled
+  notes           VARCHAR(1000) NULL,
+  created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  KEY ix_lt_planned_events_user (user_id, status, start_datetime),
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  FOREIGN KEY (activity_id) REFERENCES lt_activities(id) ON DELETE SET NULL,
+  FOREIGN KEY (location_id) REFERENCES lt_locations(id) ON DELETE SET NULL
+) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Traces a completed PlannedEvent to the ActivityLog it produced (spec
+-- section 65: PlannedEvent 0..1 -> 1 ActivityLog). Run once.
+ALTER TABLE lt_activity_log
+  ADD COLUMN planned_event_id INT NULL AFTER learning_mode,
+  ADD KEY ix_lt_activity_log_planned_event (planned_event_id),
+  ADD FOREIGN KEY (planned_event_id) REFERENCES lt_planned_events(id) ON DELETE SET NULL;
+
 -- ============================================================
 -- BOOTSTRAP (run once, after you've signed up through My Apps Hub):
 --
@@ -287,4 +351,9 @@ ALTER TABLE lt_goals
 -- 6) Check Engagement for the overall score (Week/Rolling 4 Weeks/Month/
 --    Quarter/Year) and the weekly heat map. Set a goal's Weight above 1 to
 --    make it count more toward the overall score, below 1 to count less.
+--
+-- 7) On Manage's Seasons section, add a season (e.g. "Concert Band Season"
+--    01-01 to 09-30) and link it to a goal so that goal only counts while
+--    in season. On Plan, add an upcoming event, mark it complete when it
+--    happens, or mark a whole date range (a trip) as an exception day type.
 -- ============================================================

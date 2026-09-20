@@ -33,6 +33,12 @@
 // period is asked about (week/rolling-4-weeks/month/quarter/year, or a
 // heat map's per-week rows) and produces a transparent weighted score --
 // nothing here is persisted (spec section 129), it's all calculated live.
+//
+// Phase 6 (Planning, Seasons, and Calendar-Friendly Behavior) adds Seasons
+// (a goal linked to one only counts while today falls in it), PlannedEvent
+// (completing one creates its ActivityLog entry automatically, tying the
+// two together via planned_event_id), and setDayStatusRange() for marking
+// a whole trip/vacation at once instead of day by day.
 
 require_once __DIR__ . '/config.php';
 
@@ -421,7 +427,7 @@ function minutesBetween(?string $start, ?string $end): ?int {
 function listActivityLog(int $userId, string $from, string $to, ?int $activityId): array {
   $sql = 'SELECT al.id, al.activity_id, a.name AS activity_name, al.activity_date,
                  al.start_time, al.end_time, al.duration_minutes, al.location_id,
-                 l.name AS location_name, al.productive, al.billable, al.shared_life,
+                 l.name AS location_name, l.address AS location_address, al.productive, al.billable, al.shared_life,
                  al.cost_amount, al.notes, al.learning_project_id, lp.name AS learning_project_name,
                  al.learning_mode,
                  (SELECT GROUP_CONCAT(alp.person_id) FROM lt_activity_log_person alp WHERE alp.activity_log_id = al.id) AS person_ids,
@@ -457,6 +463,7 @@ function listActivityLog(int $userId, string $from, string $to, ?int $activityId
       'DurationMinutes' => $r['duration_minutes'] !== null ? (int)$r['duration_minutes'] : null,
       'LocationId' => $r['location_id'] !== null ? (int)$r['location_id'] : null,
       'LocationName' => (string)($r['location_name'] ?? ''),
+      'LocationAddress' => (string)($r['location_address'] ?? ''),
       'Productive' => (bool)$r['productive'],
       'Billable' => (bool)$r['billable'],
       'SharedLife' => (bool)$r['shared_life'],
@@ -592,13 +599,14 @@ function normEnum(string $v, array $allowed, string $default): string {
 }
 
 function listGoals(int $userId): array {
+  // Correlated subqueries rather than joining both bridge tables directly --
+  // two LEFT JOINs here would cross-multiply activity_ids x season_ids.
   $stmt = db()->prepare(
     'SELECT g.id, g.name, g.goal_type, g.cadence_type, g.target_value, g.weight, g.active,
-            GROUP_CONCAT(ga.activity_id) AS activity_ids
+            (SELECT GROUP_CONCAT(ga.activity_id) FROM lt_goal_activity ga WHERE ga.goal_id = g.id) AS activity_ids,
+            (SELECT GROUP_CONCAT(gs.season_id) FROM lt_goal_season gs WHERE gs.goal_id = g.id) AS season_ids
      FROM lt_goals g
-     LEFT JOIN lt_goal_activity ga ON ga.goal_id = g.id
      WHERE g.user_id = ?
-     GROUP BY g.id
      ORDER BY g.active DESC, g.name'
   );
   $stmt->bind_param('i', $userId);
@@ -615,6 +623,7 @@ function listGoals(int $userId): array {
       'Weight' => (float)$r['weight'],
       'Active' => (bool)$r['active'],
       'ActivityIds' => $r['activity_ids'] ? array_map('intval', explode(',', $r['activity_ids'])) : [],
+      'SeasonIds' => $r['season_ids'] ? array_map('intval', explode(',', $r['season_ids'])) : [],
     ];
   }
   $stmt->close();
@@ -675,6 +684,7 @@ function addGoal(int $userId, array $b): int {
     duplicateNameFail($e, 'goal');
   }
   syncBridge('lt_goal_activity', 'goal_id', $id, 'activity_id', ownedIdsIn('lt_activities', $userId, $b['activityIds'] ?? []));
+  syncBridge('lt_goal_season', 'goal_id', $id, 'season_id', ownedIdsIn('lt_seasons', $userId, $b['seasonIds'] ?? []));
   return $id;
 }
 
@@ -698,6 +708,99 @@ function updateGoal(int $userId, int $id, array $b): void {
     duplicateNameFail($e, 'goal');
   }
   syncBridge('lt_goal_activity', 'goal_id', $id, 'activity_id', ownedIdsIn('lt_activities', $userId, $b['activityIds'] ?? []));
+  syncBridge('lt_goal_season', 'goal_id', $id, 'season_id', ownedIdsIn('lt_seasons', $userId, $b['seasonIds'] ?? []));
+}
+
+// ---- Phase 6: Seasons ----
+
+const MONTH_DAY_RE = '/^(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/';
+
+function listSeasons(int $userId): array {
+  $stmt = db()->prepare('SELECT id, name, start_month_day, end_month_day, active FROM lt_seasons WHERE user_id = ? ORDER BY active DESC, name');
+  $stmt->bind_param('i', $userId);
+  $stmt->execute();
+  $res = $stmt->get_result();
+  $out = [];
+  while ($r = $res->fetch_assoc()) {
+    $out[] = [
+      'Id' => (int)$r['id'],
+      'Name' => (string)$r['name'],
+      'StartMonthDay' => (string)$r['start_month_day'],
+      'EndMonthDay' => (string)$r['end_month_day'],
+      'Active' => (bool)$r['active'],
+    ];
+  }
+  $stmt->close();
+  return $out;
+}
+
+function seasonMonthDays(array $b): array {
+  $start = trim((string)($b['startMonthDay'] ?? ''));
+  $end = trim((string)($b['endMonthDay'] ?? ''));
+  if (!preg_match(MONTH_DAY_RE, $start) || !preg_match(MONTH_DAY_RE, $end)) {
+    fail('Start and end must be valid MM-DD dates');
+  }
+  return [$start, $end];
+}
+
+function addSeason(int $userId, array $b): int {
+  $name = trim((string)($b['name'] ?? ''));
+  if ($name === '') { fail('Season name is required'); }
+  [$start, $end] = seasonMonthDays($b);
+  try {
+    $stmt = db()->prepare('INSERT INTO lt_seasons (user_id, name, start_month_day, end_month_day) VALUES (?, ?, ?, ?)');
+    $stmt->bind_param('isss', $userId, $name, $start, $end);
+    $stmt->execute();
+    $id = $stmt->insert_id;
+    $stmt->close();
+    return $id;
+  } catch (mysqli_sql_exception $e) {
+    duplicateNameFail($e, 'season');
+  }
+}
+
+function updateSeason(int $userId, int $id, array $b): void {
+  $name = trim((string)($b['name'] ?? ''));
+  if ($name === '') { fail('Season name is required'); }
+  [$start, $end] = seasonMonthDays($b);
+  $active = !empty($b['active']) ? 1 : 0;
+  try {
+    $stmt = db()->prepare('UPDATE lt_seasons SET name = ?, start_month_day = ?, end_month_day = ?, active = ? WHERE id = ? AND user_id = ?');
+    $stmt->bind_param('sssiii', $name, $start, $end, $active, $id, $userId);
+    $stmt->execute();
+    $stmt->close();
+  } catch (mysqli_sql_exception $e) {
+    duplicateNameFail($e, 'season');
+  }
+}
+
+// True if $monthDay ('MM-DD') falls within [$start,$end], handling ranges
+// that wrap the year boundary (e.g. '11-15' to '02-15' for a winter season).
+function monthDayInRange(string $monthDay, string $start, string $end): bool {
+  if ($start <= $end) { return $monthDay >= $start && $monthDay <= $end; }
+  return $monthDay >= $start || $monthDay <= $end;
+}
+
+// A goal with no linked seasons is always active. One with linked seasons
+// is only active while today falls within one of them (spec section 55).
+// $seasonsById is a lookup built once per request (see computeGoalProgress/
+// computeEngagement) rather than re-querying per goal.
+function goalInSeasonNow(array $goal, array $seasonsById): bool {
+  if (empty($goal['SeasonIds'])) { return true; }
+  $todayMd = (new DateTime('today'))->format('m-d');
+  foreach ($goal['SeasonIds'] as $sid) {
+    $s = $seasonsById[$sid] ?? null;
+    if ($s && $s['Active'] && monthDayInRange($todayMd, $s['StartMonthDay'], $s['EndMonthDay'])) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function seasonsById(int $userId): array {
+  $out = [];
+  foreach (listSeasons($userId) as $s) { $out[$s['Id']] = $s; }
+  return $out;
 }
 
 function weekRange(): array {
@@ -763,7 +866,8 @@ function goalActualCount(int $userId, array $activityIds, string $start, string 
 }
 
 function computeGoalProgress(int $userId): array {
-  $goals = array_filter(listGoals($userId), fn($g) => $g['Active']);
+  $seasons = seasonsById($userId);
+  $goals = array_filter(listGoals($userId), fn($g) => $g['Active'] && goalInSeasonNow($g, $seasons));
   [$weekStart, $weekEnd] = weekRange();
   [$monthStart, $monthEnd] = monthRange();
   $out = [];
@@ -856,7 +960,12 @@ function goalScorePercent(array $goal, float $actual, float $expected): float {
 // (spec section 136 point 8) but nothing stops them from being tracked --
 // they just don't move the number.
 function computeEngagement(int $userId, string $start, string $end): array {
-  $goals = array_filter(listGoals($userId), fn($g) => $g['Active'] && $g['GoalType'] !== 'TrackOnly');
+  // goalInSeasonNow() checks today's date regardless of $start/$end -- fine
+  // for Week/Rolling4Weeks/Month, an approximation for Quarter/Year (a
+  // season that changes mid-quarter won't be split within that quarter's
+  // score). Acceptable trade for a personal app; revisit if it matters.
+  $seasons = seasonsById($userId);
+  $goals = array_filter(listGoals($userId), fn($g) => $g['Active'] && $g['GoalType'] !== 'TrackOnly' && goalInSeasonNow($g, $seasons));
   $breakdown = [];
   $weightedSum = 0.0;
   $weightTotal = 0.0;
@@ -1111,6 +1220,181 @@ function sharedLifeSummary(int $userId): array {
   return ['ThisWeek' => $countIn($weekStart, $weekEnd), 'ThisMonth' => $countIn($monthStart, $monthEnd)];
 }
 
+// ---- Phase 6: Planning (PlannedEvent + bulk Day Status) ----
+
+const PLANNED_EVENT_STATUSES = ['Planned', 'Completed', 'Cancelled'];
+
+// Like combineDateTime() but the result is required -- a PlannedEvent
+// always needs a real start time (spec section 65), unlike an ActivityLog
+// entry which can be dateless.
+function requireDateTime(string $date, $time, string $label): string {
+  if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) { fail("A valid $label date is required"); }
+  $combined = combineDateTime($date, $time);
+  if ($combined === null) { fail("A valid $label time is required"); }
+  return $combined;
+}
+
+function listPlannedEvents(int $userId, ?string $status): array {
+  $sql = 'SELECT pe.id, pe.activity_id, a.name AS activity_name, pe.title, pe.start_datetime,
+                 pe.end_datetime, pe.location_id, l.name AS location_name, l.address AS location_address,
+                 pe.status, pe.notes
+          FROM lt_planned_events pe
+          LEFT JOIN lt_activities a ON a.id = pe.activity_id
+          LEFT JOIN lt_locations l ON l.id = pe.location_id
+          WHERE pe.user_id = ?';
+  $types = 'i';
+  $params = [$userId];
+  if ($status !== null) {
+    $sql .= ' AND pe.status = ?';
+    $types .= 's';
+    $params[] = $status;
+  }
+  $sql .= ' ORDER BY pe.start_datetime ASC';
+  $stmt = db()->prepare($sql);
+  $stmt->bind_param($types, ...$params);
+  $stmt->execute();
+  $res = $stmt->get_result();
+  $out = [];
+  while ($r = $res->fetch_assoc()) {
+    $out[] = [
+      'Id' => (int)$r['id'],
+      'ActivityId' => $r['activity_id'] !== null ? (int)$r['activity_id'] : null,
+      'ActivityName' => (string)($r['activity_name'] ?? ''),
+      'Title' => (string)$r['title'],
+      'StartDateTime' => $r['start_datetime'],
+      'EndDateTime' => $r['end_datetime'],
+      'LocationId' => $r['location_id'] !== null ? (int)$r['location_id'] : null,
+      'LocationName' => (string)($r['location_name'] ?? ''),
+      'LocationAddress' => (string)($r['location_address'] ?? ''),
+      'Status' => (string)$r['status'],
+      'Notes' => (string)($r['notes'] ?? ''),
+    ];
+  }
+  $stmt->close();
+  return $out;
+}
+
+function plannedEventFields(int $userId, array $b): array {
+  $title = trim((string)($b['title'] ?? ''));
+  if ($title === '') { fail('Title is required'); }
+  $activityId = ownedId('lt_activities', isset($b['activityId']) && $b['activityId'] !== '' ? (int)$b['activityId'] : null, $userId);
+  $startDate = trim((string)($b['startDate'] ?? ''));
+  $startDateTime = requireDateTime($startDate, $b['startTime'] ?? null, 'start');
+  $endDateTime = null;
+  if (!empty($b['endTime'])) {
+    $endDate = trim((string)($b['endDate'] ?? '')) ?: $startDate;
+    $endDateTime = requireDateTime($endDate, $b['endTime'], 'end');
+  }
+  $locationId = ownedId('lt_locations', isset($b['locationId']) && $b['locationId'] !== '' ? (int)$b['locationId'] : null, $userId);
+  $notes = nullIfEmpty((string)($b['notes'] ?? ''));
+  return [$title, $activityId, $startDateTime, $endDateTime, $locationId, $notes];
+}
+
+function addPlannedEvent(int $userId, array $b): int {
+  [$title, $activityId, $startDateTime, $endDateTime, $locationId, $notes] = plannedEventFields($userId, $b);
+  $pairs = [
+    ['i', $userId], ['i', $activityId], ['s', $title], ['s', $startDateTime],
+    ['s', $endDateTime], ['i', $locationId], ['s', $notes],
+  ];
+  $stmt = db()->prepare(
+    'INSERT INTO lt_planned_events (user_id, activity_id, title, start_datetime, end_datetime, location_id, notes)
+     VALUES (?, ?, ?, ?, ?, ?, ?)'
+  );
+  $stmt->bind_param(implode('', array_column($pairs, 0)), ...array_column($pairs, 1));
+  $stmt->execute();
+  $id = $stmt->insert_id;
+  $stmt->close();
+  return $id;
+}
+
+function updatePlannedEvent(int $userId, int $id, array $b): void {
+  [$title, $activityId, $startDateTime, $endDateTime, $locationId, $notes] = plannedEventFields($userId, $b);
+  $pairs = [
+    ['i', $activityId], ['s', $title], ['s', $startDateTime], ['s', $endDateTime],
+    ['i', $locationId], ['s', $notes], ['i', $id], ['i', $userId],
+  ];
+  $stmt = db()->prepare(
+    'UPDATE lt_planned_events
+     SET activity_id = ?, title = ?, start_datetime = ?, end_datetime = ?, location_id = ?, notes = ?
+     WHERE id = ? AND user_id = ?'
+  );
+  $stmt->bind_param(implode('', array_column($pairs, 0)), ...array_column($pairs, 1));
+  $stmt->execute();
+  $stmt->close();
+}
+
+function setPlannedEventStatus(int $userId, int $id, string $status): void {
+  $status = normEnum($status, PLANNED_EVENT_STATUSES, 'Planned');
+  $stmt = db()->prepare('UPDATE lt_planned_events SET status = ? WHERE id = ? AND user_id = ?');
+  $stmt->bind_param('sii', $status, $id, $userId);
+  $stmt->execute();
+  $stmt->close();
+}
+
+function deletePlannedEvent(int $userId, int $id): void {
+  $stmt = db()->prepare('DELETE FROM lt_planned_events WHERE id = ? AND user_id = ?');
+  $stmt->bind_param('ii', $id, $userId);
+  $stmt->execute();
+  $stmt->close();
+}
+
+// Marks a planned event Completed and, if it has an activity, creates the
+// matching ActivityLog entry (spec section 65: a completed PlannedEvent
+// may link to an ActivityLog) so completing a plan IS logging it -- no
+// double entry required.
+function completePlannedEvent(int $userId, int $id): array {
+  $stmt = db()->prepare(
+    'SELECT id, activity_id, start_datetime, end_datetime, location_id, notes
+     FROM lt_planned_events WHERE id = ? AND user_id = ?'
+  );
+  $stmt->bind_param('ii', $id, $userId);
+  $stmt->execute();
+  $event = $stmt->get_result()->fetch_assoc();
+  $stmt->close();
+  if (!$event) { fail('Planned event not found'); }
+
+  $logId = null;
+  if ($event['activity_id'] !== null) {
+    $activityDate = substr($event['start_datetime'], 0, 10);
+    $duration = minutesBetween($event['start_datetime'], $event['end_datetime']);
+    $locationId = $event['location_id'] !== null ? (int)$event['location_id'] : null;
+    $pairs = [
+      ['i', $userId], ['i', (int)$event['activity_id']], ['s', $activityDate],
+      ['s', $event['start_datetime']], ['s', $event['end_datetime']], ['i', $duration],
+      ['i', $locationId], ['s', $event['notes']], ['i', $id],
+    ];
+    $ins = db()->prepare(
+      'INSERT INTO lt_activity_log
+        (user_id, activity_id, activity_date, start_time, end_time, duration_minutes, location_id, notes, planned_event_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    );
+    $ins->bind_param(implode('', array_column($pairs, 0)), ...array_column($pairs, 1));
+    $ins->execute();
+    $logId = $ins->insert_id;
+    $ins->close();
+  }
+
+  setPlannedEventStatus($userId, $id, 'Completed');
+  return ['logId' => $logId];
+}
+
+// Bulk-marks every day in [$from,$to] with the same day type -- the
+// practical way to handle a multi-day exception (a trip, an illness)
+// without clicking through each day on Today (spec section 31/56,
+// implemented via the existing per-day mechanism -- see schema.sql).
+function setDayStatusRange(int $userId, string $from, string $to, string $dayType, string $notes): int {
+  $start = new DateTime($from);
+  $end = new DateTime($to);
+  if ($end < $start) { fail('End date must be on or after start date'); }
+  $days = (int)$start->diff($end)->days;
+  if ($days > 120) { fail('Range is too long (max 120 days)'); }
+  for ($i = 0; $i <= $days; $i++) {
+    $date = (clone $start)->modify("+$i days")->format('Y-m-d');
+    setDayStatus($userId, $date, $dayType, $notes);
+  }
+  return $days + 1;
+}
+
 // ---- Router ----
 
 $method = $_SERVER['REQUEST_METHOD'];
@@ -1320,6 +1604,27 @@ switch ($action) {
     respond(['ok' => true, 'progress' => computeGoalProgress((int)$user['id'])]);
   }
 
+  // -- Phase 6: Seasons --
+
+  case 'seasons': {
+    $user = requireMember();
+    respond(['ok' => true, 'seasons' => listSeasons((int)$user['id'])]);
+  }
+
+  case 'addSeason': {
+    $user = requireMember();
+    $id = addSeason((int)$user['id'], $body);
+    respond(['ok' => true, 'id' => $id]);
+  }
+
+  case 'updateSeason': {
+    $user = requireMember();
+    $id = (int)($body['id'] ?? 0);
+    if ($id <= 0) { fail('Missing season id'); }
+    updateSeason((int)$user['id'], $id, $body);
+    respond(['ok' => true]);
+  }
+
   // -- Phase 3: Day Status --
 
   case 'dayStatus': {
@@ -1335,6 +1640,17 @@ switch ($action) {
     if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) { fail('A valid date is required'); }
     setDayStatus((int)$user['id'], $date, (string)($body['dayType'] ?? 'Home'), (string)($body['notes'] ?? ''));
     respond(['ok' => true]);
+  }
+
+  case 'setDayStatusRange': {
+    $user = requireMember();
+    $from = trim((string)($body['from'] ?? ''));
+    $to = trim((string)($body['to'] ?? ''));
+    if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $from) || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $to)) {
+      fail('A valid start and end date are required');
+    }
+    $days = setDayStatusRange((int)$user['id'], $from, $to, (string)($body['dayType'] ?? 'Home'), (string)($body['notes'] ?? ''));
+    respond(['ok' => true, 'days' => $days]);
   }
 
   // -- Phase 4: People --
@@ -1417,6 +1733,52 @@ switch ($action) {
     $weeks = isset($_GET['weeks']) ? (int)$_GET['weeks'] : 8;
     $weeks = max(4, min(26, $weeks));
     respond(['ok' => true, 'weeks' => engagementHeatmap((int)$user['id'], $weeks)]);
+  }
+
+  // -- Phase 6: Planned Events --
+
+  case 'plannedEvents': {
+    $user = requireMember();
+    $status = isset($_GET['status']) && $_GET['status'] !== '' ? (string)$_GET['status'] : null;
+    respond(['ok' => true, 'events' => listPlannedEvents((int)$user['id'], $status)]);
+  }
+
+  case 'addPlannedEvent': {
+    $user = requireMember();
+    $id = addPlannedEvent((int)$user['id'], $body);
+    respond(['ok' => true, 'id' => $id]);
+  }
+
+  case 'updatePlannedEvent': {
+    $user = requireMember();
+    $id = (int)($body['id'] ?? 0);
+    if ($id <= 0) { fail('Missing event id'); }
+    updatePlannedEvent((int)$user['id'], $id, $body);
+    respond(['ok' => true]);
+  }
+
+  case 'setPlannedEventStatus': {
+    $user = requireMember();
+    $id = (int)($body['id'] ?? 0);
+    if ($id <= 0) { fail('Missing event id'); }
+    setPlannedEventStatus((int)$user['id'], $id, (string)($body['status'] ?? 'Planned'));
+    respond(['ok' => true]);
+  }
+
+  case 'completePlannedEvent': {
+    $user = requireMember();
+    $id = (int)($body['id'] ?? 0);
+    if ($id <= 0) { fail('Missing event id'); }
+    $result = completePlannedEvent((int)$user['id'], $id);
+    respond(['ok' => true, 'logId' => $result['logId']]);
+  }
+
+  case 'deletePlannedEvent': {
+    $user = requireMember();
+    $id = (int)($body['id'] ?? 0);
+    if ($id <= 0) { fail('Missing event id'); }
+    deletePlannedEvent((int)$user['id'], $id);
+    respond(['ok' => true]);
   }
 
   default:

@@ -13,6 +13,7 @@
     <h1>🧭 Life Tempo</h1>
     <nav>
       <a href="index.html">Today</a>
+      <a href="plan.html">Plan</a>
       <a href="history.html">History</a>
       <a href="dashboard.html">Dashboard</a>
       <a href="engagement.html">Engagement</a>
@@ -26,7 +27,7 @@
   <div id="content"><p class="note">Loading…</p></div>
 </main>
 
-<footer class="site-footer">Life Tempo — Phase 5: Engagement Scoring and Heat Maps</footer>
+<footer class="site-footer">Life Tempo — Phase 6: Planning, Seasons, and Calendar-Friendly Behavior</footer>
 
 <script src="js/api.js"></script>
 <script>
@@ -40,6 +41,7 @@ let GOALS = [];
 let PEOPLE = [];
 let TAGS = [];
 let LEARNING_PROJECTS = [];
+let SEASONS = [];
 
 const GOAL_TYPE_OPTS = ['Minimum', 'Target', 'Maximum', 'TrackOnly'];
 const CADENCE_TYPE_OPTS = ['Daily', 'Weekly', 'Monthly'];
@@ -145,6 +147,7 @@ function renderLocations() {
       <td>${txt('phone', l.Phone)}</td>
       <td>${txt('websiteUrl', l.WebsiteUrl, { type: 'url' })}</td>
       <td>${chk('active', l.Active)}</td>
+      <td>${mapsUrl(l.Name, l.Address) ? `<a href="${mapsUrl(l.Name, l.Address)}" target="_blank" rel="noopener" class="btn secondary">Navigate</a>` : ''}</td>
       <td><button class="btn" data-act="save-loc">Save</button></td>
     </tr>`).join('');
   const addRow = `
@@ -157,12 +160,13 @@ function renderLocations() {
       <td>${txt('phone', '')}</td>
       <td>${txt('websiteUrl', '', { type: 'url' })}</td>
       <td>${chk('active', true)}</td>
+      <td></td>
       <td><button class="btn" data-act="add-loc">Add</button></td>
     </tr>`;
   return `
     <div class="table-wrap">
       <table class="grid">
-        <thead><tr><th>Name</th><th>Type</th><th>Address</th><th>City</th><th>State</th><th>Phone</th><th>Website</th><th>Active</th><th>Actions</th></tr></thead>
+        <thead><tr><th>Name</th><th>Type</th><th>Address</th><th>City</th><th>State</th><th>Phone</th><th>Website</th><th>Active</th><th>Map</th><th>Actions</th></tr></thead>
         <tbody>${rows}${addRow}</tbody>
       </table>
     </div>`;
@@ -261,6 +265,7 @@ function renderGoals() {
       <td>${txt('targetValue', g.TargetValue, { type: 'number', attrs: 'step="0.5" min="0"' })}</td>
       <td>${txt('weight', g.Weight, { type: 'number', attrs: 'step="0.1" min="0.1"' })}</td>
       <td>${multiSelectOptions('activityIds', activeActivities, 'Id', 'Name', g.ActivityIds)}</td>
+      <td>${multiSelectOptions('seasonIds', SEASONS.filter(s => s.Active), 'Id', 'Name', g.SeasonIds)}</td>
       <td>${chk('active', g.Active)}</td>
       <td><button class="btn" data-act="save-goal">Save</button></td>
     </tr>`).join('');
@@ -272,6 +277,7 @@ function renderGoals() {
       <td>${txt('targetValue', '', { type: 'number', attrs: 'step="0.5" min="0"' })}</td>
       <td>${txt('weight', 1, { type: 'number', attrs: 'step="0.1" min="0.1"' })}</td>
       <td>${multiSelectOptions('activityIds', activeActivities, 'Id', 'Name', [])}</td>
+      <td>${multiSelectOptions('seasonIds', SEASONS.filter(s => s.Active), 'Id', 'Name', [])}</td>
       <td>${chk('active', true)}</td>
       <td><button class="btn" data-act="add-goal">Add</button></td>
     </tr>`;
@@ -279,7 +285,7 @@ function renderGoals() {
     <div class="table-wrap">
       <table class="grid">
         <thead><tr>
-          <th>Name</th><th>Type</th><th>Cadence</th><th>Target</th><th>Weight</th><th>Counts activities</th><th>Active</th><th>Actions</th>
+          <th>Name</th><th>Type</th><th>Cadence</th><th>Target</th><th>Weight</th><th>Counts activities</th><th>Seasons (blank = always)</th><th>Active</th><th>Actions</th>
         </tr></thead>
         <tbody>${rows}${addRow}</tbody>
       </table>
@@ -299,6 +305,7 @@ async function handleGoalAction(btn) {
     targetValue: data.targetValue,
     weight: data.weight,
     activityIds: data.activityIds,
+    seasonIds: data.seasonIds,
     active: data.active,
   };
   btn.disabled = true;
@@ -311,6 +318,58 @@ async function handleGoalAction(btn) {
     await reloadAll();
   } catch (e) {
     showStatus("Couldn't save that goal.");
+    btn.disabled = false;
+  }
+}
+
+// ---------------- Seasons ----------------
+
+function renderSeasons() {
+  const rows = SEASONS.map(s => `
+    <tr data-id="${s.Id}" class="${s.Active ? '' : 'inactive-row'}">
+      <td>${txt('name', s.Name)}</td>
+      <td>${txt('startMonthDay', s.StartMonthDay, { attrs: 'placeholder="MM-DD"' })}</td>
+      <td>${txt('endMonthDay', s.EndMonthDay, { attrs: 'placeholder="MM-DD"' })}</td>
+      <td>${chk('active', s.Active)}</td>
+      <td><button class="btn" data-act="save-season">Save</button></td>
+    </tr>`).join('');
+  const addRow = `
+    <tr id="add-season">
+      <td>${txt('name', '')}</td>
+      <td>${txt('startMonthDay', '', { attrs: 'placeholder="MM-DD"' })}</td>
+      <td>${txt('endMonthDay', '', { attrs: 'placeholder="MM-DD"' })}</td>
+      <td>${chk('active', true)}</td>
+      <td><button class="btn" data-act="add-season">Add</button></td>
+    </tr>`;
+  return `
+    <div class="table-wrap">
+      <table class="grid">
+        <thead><tr><th>Name</th><th>Start (MM-DD)</th><th>End (MM-DD)</th><th>Active</th><th>Actions</th></tr></thead>
+        <tbody>${rows}${addRow}</tbody>
+      </table>
+    </div>`;
+}
+
+async function handleSeasonAction(btn) {
+  const act = btn.dataset.act;
+  const tr = btn.closest('tr');
+  const data = readRow(tr);
+  showStatus('');
+  if (!data.name.trim()) { showStatus('Season name is required.'); return; }
+  if (!/^\d{2}-\d{2}$/.test(data.startMonthDay) || !/^\d{2}-\d{2}$/.test(data.endMonthDay)) {
+    showStatus('Start and end must be MM-DD, e.g. 11-01.');
+    return;
+  }
+  btn.disabled = true;
+  try {
+    if (act === 'add-season') {
+      await postAction('addSeason', data);
+    } else {
+      await postAction('updateSeason', { id: Number(tr.dataset.id), ...data });
+    }
+    await reloadAll();
+  } catch (e) {
+    showStatus("Couldn't save that season.");
     btn.disabled = false;
   }
 }
@@ -478,6 +537,11 @@ function render() {
       <div id="goal-table">${renderGoals()}</div>
     </div>
     <div class="card">
+      <h3>Seasons</h3>
+      <p class="note">Recurring date ranges (e.g. "Concert Band Season" 01-01 to 09-30). Link a goal to one or more seasons above and it only counts toward Dashboard/Engagement while today falls in season — leave a goal's Seasons blank to keep it always active.</p>
+      <div id="season-table">${renderSeasons()}</div>
+    </div>
+    <div class="card">
       <h3>People</h3>
       <p class="note">Who you do things with — link them to a log entry on Today/History to record participation.</p>
       <div id="person-table">${renderPeople()}</div>
@@ -497,15 +561,16 @@ function render() {
   contentEl.querySelectorAll('[data-act^="save-loc"], [data-act="add-loc"]').forEach(b => b.addEventListener('click', () => handleLocationAction(b)));
   contentEl.querySelectorAll('[data-act^="save-act"], [data-act="add-act"]').forEach(b => b.addEventListener('click', () => handleActivityAction(b)));
   contentEl.querySelectorAll('[data-act^="save-goal"], [data-act="add-goal"]').forEach(b => b.addEventListener('click', () => handleGoalAction(b)));
+  contentEl.querySelectorAll('[data-act^="save-season"], [data-act="add-season"]').forEach(b => b.addEventListener('click', () => handleSeasonAction(b)));
   contentEl.querySelectorAll('[data-act^="save-person"], [data-act="add-person"]').forEach(b => b.addEventListener('click', () => handlePersonAction(b)));
   contentEl.querySelectorAll('[data-act^="save-tag"], [data-act="add-tag"]').forEach(b => b.addEventListener('click', () => handleTagAction(b)));
   contentEl.querySelectorAll('[data-act^="save-lp"], [data-act="add-lp"]').forEach(b => b.addEventListener('click', () => handleLearningProjectAction(b)));
 }
 
 async function reloadAll() {
-  const [catRes, locRes, actRes, goalRes, personRes, tagRes, lpRes] = await Promise.all([
+  const [catRes, locRes, actRes, goalRes, personRes, tagRes, lpRes, seasonRes] = await Promise.all([
     fetchData('categories'), fetchData('locations'), fetchData('activities'), fetchData('goals'),
-    fetchData('people'), fetchData('tags'), fetchData('learningProjects'),
+    fetchData('people'), fetchData('tags'), fetchData('learningProjects'), fetchData('seasons'),
   ]);
   CATEGORIES = (catRes && catRes.categories) || [];
   LOCATIONS = (locRes && locRes.locations) || [];
@@ -514,6 +579,7 @@ async function reloadAll() {
   PEOPLE = (personRes && personRes.people) || [];
   TAGS = (tagRes && tagRes.tags) || [];
   LEARNING_PROJECTS = (lpRes && lpRes.learningProjects) || [];
+  SEASONS = (seasonRes && seasonRes.seasons) || [];
   render();
 }
 

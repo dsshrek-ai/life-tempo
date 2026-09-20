@@ -13,6 +13,7 @@
     <h1>🧭 Life Tempo</h1>
     <nav>
       <a href="index.html" aria-current="page">Today</a>
+      <a href="plan.html">Plan</a>
       <a href="history.html">History</a>
       <a href="dashboard.html">Dashboard</a>
       <a href="engagement.html">Engagement</a>
@@ -26,7 +27,7 @@
   <div id="content"><p class="note">Loading…</p></div>
 </main>
 
-<footer class="site-footer">Life Tempo — Phase 5: Engagement Scoring and Heat Maps</footer>
+<footer class="site-footer">Life Tempo — Phase 6: Planning, Seasons, and Calendar-Friendly Behavior</footer>
 
 <script src="js/api.js"></script>
 <script>
@@ -38,6 +39,7 @@ let LOCATIONS = [];
 let PEOPLE = [];
 let TAGS = [];
 let LEARNING_PROJECTS = [];
+let UPCOMING = [];
 let editingId = null;
 let DAY_STATUS = { DayType: 'Home' };
 
@@ -54,6 +56,12 @@ function activeLocations() { return LOCATIONS.filter(l => l.Active); }
 
 function optionsHtml(items, valueKey, labelKey, selected) {
   return items.map(i => `<option value="${i[valueKey]}" ${String(i[valueKey]) === String(selected) ? 'selected' : ''}>${escapeHtml(i[labelKey])}</option>`).join('');
+}
+
+function formatUpcomingWhen(startDateTime) {
+  const [datePart] = startDateTime.split(' ');
+  const heading = formatDateHeading(datePart);
+  return `${heading} · ${formatTime12h(startDateTime)}`;
 }
 
 function renderShell(todayEntries) {
@@ -73,6 +81,19 @@ function renderShell(todayEntries) {
       </div>
       <p class="note" style="margin-top:0.6rem;">Travel/Vacation/Sick days won't count against Daily-cadence goals like practice or exercise (see Dashboard).</p>
     </div>
+
+    ${UPCOMING.length ? `
+      <div class="card">
+        <h3>Coming Up</h3>
+        ${UPCOMING.slice(0, 3).map(ev => `
+          <div class="log-row">
+            <div class="lr-main">
+              <div class="lr-activity">${escapeHtml(ev.Title)}</div>
+              <div class="lr-meta">${escapeHtml(formatUpcomingWhen(ev.StartDateTime))}${ev.LocationName ? ' · ' + locationLinkHtml(ev.LocationName, ev.LocationAddress) : ''}</div>
+            </div>
+          </div>`).join('')}
+        <p><a href="plan.html">See all planned events →</a></p>
+      </div>` : ''}
 
     ${quickLogActivities.length ? `
       <div class="card">
@@ -338,9 +359,10 @@ async function loadToday() {
 
 async function load() {
   try {
-    const [actRes, locRes, dayRes, personRes, tagRes, lpRes] = await Promise.all([
+    const [actRes, locRes, dayRes, personRes, tagRes, lpRes, evRes] = await Promise.all([
       fetchData('activities'), fetchData('locations'), fetchData('dayStatus'),
       fetchData('people'), fetchData('tags'), fetchData('learningProjects'),
+      fetchData('plannedEvents', { status: 'Planned' }),
     ]);
     ACTIVITIES = (actRes && actRes.activities) || [];
     LOCATIONS = (locRes && locRes.locations) || [];
@@ -348,6 +370,7 @@ async function load() {
     PEOPLE = (personRes && personRes.people) || [];
     TAGS = (tagRes && tagRes.tags) || [];
     LEARNING_PROJECTS = (lpRes && lpRes.learningProjects) || [];
+    UPCOMING = ((evRes && evRes.events) || []).filter(e => e.StartDateTime >= nowDateTimeStr());
     await loadToday();
   } catch (e) {
     handleError(contentEl, e);

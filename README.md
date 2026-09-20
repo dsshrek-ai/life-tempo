@@ -10,31 +10,39 @@ Full philosophy, conceptual model, MySQL spec, and phased roadmap:
 
 ## Status
 
-**Phase 5 — Engagement Scoring and Heat Maps** (see spec section 146) —
-the spec calls this the **first major product milestone**: once it's
-working, the app fully answers its central question, "Am I living the
-retirement I intended to live?" Phases 1-4 (login; activity logging; goals/
-cadence/Dashboard; people/shared life/learning) are done. Phase 5 adds:
+**Phase 6 — Planning, Seasons, and Calendar-Friendly Behavior** (see spec
+section 146). Phases 1-5 (login; activity logging; goals/cadence/Dashboard;
+people/shared life/learning; the Engagement score and heat map — the
+spec's first major product milestone) are done. Phase 6 adds:
 
-- **Manage → Goals → Weight** — how much a goal counts toward the overall
-  score (default 1; higher counts more, lower counts less)
-- **Engagement** (new nav item) — an overall score for This Week, Rolling 4
-  Weeks, This Month, This Quarter, and This Year, each a weighted average of
-  every active goal, capped per goal at 100% so no goal can inflate the
-  score by overachieving. Every score has a "Breakdown" showing exactly
-  which goals contributed, their actual/expected, and their weight —
-  nothing is a black box.
-- **Engagement → Weekly Heat Map** — the last 8 weeks, one row each, colored
-  by score (green 70%+, amber 50-69%, red below 50%) so patterns over time
-  are visible at a glance, not just a single current number.
+- **Plan** (new nav item) — add upcoming events (title, optional activity/
+  location, date/time); **Complete** one and, if it has an activity, its
+  ActivityLog entry is created automatically — completing a plan *is*
+  logging it, no double entry. Also **Cancel**, **Edit**, **Delete**, and
+  an "Add to Google Calendar" link per event.
+- **Today → Coming Up** — the next few planned events, right where you
+  already check in daily.
+- **Manage → Seasons** — recurring date ranges (e.g. "Concert Band Season"
+  01-01 to 09-30); link a goal to one or more seasons and it only counts
+  toward Dashboard/Engagement while today falls in season.
+- **Plan → Mark a Date Range** — bulk-mark a trip/illness as one day type
+  across several days at once, instead of clicking through each day.
+- **Navigate links** — Locations (Manage) and any location shown on
+  Today/History/Plan now link out to Google Maps.
+
+Templates (spec section 29/51) were skipped — Activity's existing Quick Log
+flag already covers one-tap logging, and a separate ExceptionPeriod table
+was folded into the existing per-day DayStatus mechanism rather than
+maintaining two overlapping day-exclusion concepts (see `api/schema.sql`
+Phase 6 comments for the reasoning).
 
 ## Next
 
-Phase 6 (Planning, Seasons, and Calendar-Friendly Behavior) and Phase 7
-(Travel, Contract Work, and Advanced Features) remain — see spec section 146.
-Per spec section 147.2, it's worth actually living with Phase 5 a while
-before building further: does the engagement score feel meaningful? Is any
-goal's weighting off? Does the heat map reveal anything surprising?
+Phase 7 (Travel, Contract Work, and Advanced Features) is the last phase
+in the spec's roadmap — see spec section 146. As always (147.2), worth
+using Phase 6 for a while first: is Plan actually where upcoming
+commitments get tracked, or does it go unused? Do Seasons behave as
+expected once one starts/ends?
 
 ## Stack
 

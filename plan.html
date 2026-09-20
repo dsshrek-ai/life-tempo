@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Plan | Life Tempo</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="bar">
+    <h1>🧭 Life Tempo</h1>
+    <nav>
+      <a href="index.html">Today</a>
+      <a href="plan.html" aria-current="page">Plan</a>
+      <a href="history.html">History</a>
+      <a href="dashboard.html">Dashboard</a>
+      <a href="engagement.html">Engagement</a>
+      <a href="manage.html">Manage</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <div id="status"></div>
+  <div id="content"><p class="note">Loading…</p></div>
+</main>
+
+<footer class="site-footer">Life Tempo — Phase 6: Planning, Seasons, and Calendar-Friendly Behavior</footer>
+
+<script src="js/api.js"></script>
+<script>
+const statusEl = document.getElementById('status');
+const contentEl = document.getElementById('content');
+
+let ACTIVITIES = [];
+let LOCATIONS = [];
+let editingId = null;
+
+function showStatus(msg) {
+  if (!msg) { statusEl.style.display = 'none'; return; }
+  statusEl.textContent = msg;
+  statusEl.style.display = 'block';
+}
+
+function optionsHtml(items, valueKey, labelKey, selected) {
+  return items.map(i => `<option value="${i[valueKey]}" ${String(i[valueKey]) === String(selected) ? 'selected' : ''}>${escapeHtml(i[labelKey])}</option>`).join('');
+}
+
+function formatEventWhen(ev) {
+  const [datePart, timePart] = ev.StartDateTime.split(' ');
+  const [y, m, d] = datePart.split('-').map(Number);
+  const dateStr = new Date(y, m - 1, d).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+  let range = formatTime12h(ev.StartDateTime);
+  if (ev.EndDateTime) range += '–' + formatTime12h(ev.EndDateTime);
+  return `${dateStr} · ${range}`;
+}
+
+function render(events) {
+  contentEl.innerHTML = `
+    <div class="card">
+      <h3 id="form-heading">Add a Planned Event</h3>
+      <form id="event-form">
+        <input type="hidden" id="f-id">
+        <label for="f-title">Title</label>
+        <input type="text" id="f-title" required placeholder="Concert band rehearsal">
+
+        <div class="form-grid">
+          <div>
+            <label for="f-activity">Activity (optional)</label>
+            <select id="f-activity">
+              <option value="">(none)</option>
+              ${optionsHtml(ACTIVITIES.filter(a => a.Active), 'Id', 'Name')}
+            </select>
+          </div>
+          <div>
+            <label for="f-location">Location (optional)</label>
+            <select id="f-location">
+              <option value="">(none)</option>
+              ${optionsHtml(LOCATIONS.filter(l => l.Active), 'Id', 'Name')}
+            </select>
+          </div>
+        </div>
+
+        <div class="form-grid">
+          <div>
+            <label for="f-date">Date</label>
+            <input type="date" id="f-date" value="${todayStr()}">
+          </div>
+          <div>
+            <label for="f-time">Time</label>
+            <input type="time" id="f-time">
+          </div>
+          <div>
+            <label for="f-end-time">End time (optional)</label>
+            <input type="time" id="f-end-time">
+          </div>
+        </div>
+
+        <label for="f-notes">Notes</label>
+        <textarea id="f-notes"></textarea>
+
+        <p>
+          <button type="submit" class="btn">Save</button>
+          <button type="button" class="btn secondary" id="f-cancel" style="display:none;">Cancel edit</button>
+        </p>
+      </form>
+    </div>
+
+    <div class="card">
+      <h3>Upcoming</h3>
+      <div id="event-list"></div>
+    </div>
+
+    <div class="card">
+      <h3>Mark a Date Range</h3>
+      <p class="note">For a trip, illness, or anything else that should exclude several days at once from Daily-cadence goals (see Engagement) — rather than setting each day individually on Today.</p>
+      <div class="form-grid">
+        <div>
+          <label for="r-from">From</label>
+          <input type="date" id="r-from" value="${todayStr()}">
+        </div>
+        <div>
+          <label for="r-to">To</label>
+          <input type="date" id="r-to" value="${todayStr()}">
+        </div>
+        <div>
+          <label for="r-type">Day type</label>
+          <select id="r-type">
+            <option value="Travel">Travel</option>
+            <option value="Vacation">Vacation</option>
+            <option value="Sick">Sick</option>
+            <option value="Special Event">Special Event</option>
+            <option value="Local Outing">Local Outing</option>
+            <option value="Home">Home</option>
+          </select>
+        </div>
+      </div>
+      <p><button type="button" class="btn secondary" id="range-apply">Apply</button></p>
+    </div>
+  `;
+
+  document.getElementById('event-form').addEventListener('submit', onSubmit);
+  document.getElementById('f-cancel').addEventListener('click', resetForm);
+  document.getElementById('range-apply').addEventListener('click', onApplyRange);
+
+  renderEventList(events);
+}
+
+function renderEventList(events) {
+  const list = document.getElementById('event-list');
+  const planned = events.filter(e => e.Status === 'Planned');
+  if (!planned.length) {
+    list.innerHTML = '<p class="note">Nothing planned yet.</p>';
+    return;
+  }
+  list.innerHTML = '';
+  planned.forEach(ev => list.appendChild(eventRowEl(ev)));
+}
+
+function eventRowEl(ev) {
+  const row = document.createElement('div');
+  row.className = 'log-row';
+
+  const metaBits = [formatEventWhen(ev)];
+  if (ev.ActivityName) metaBits.push(escapeHtml(ev.ActivityName));
+  if (ev.LocationName) metaBits.push(locationLinkHtml(ev.LocationName, ev.LocationAddress));
+  metaBits.push(`<a href="${gcalUrl(ev)}" target="_blank" rel="noopener">Add to Google Calendar</a>`);
+
+  const main = document.createElement('div');
+  main.className = 'lr-main';
+  main.innerHTML = `
+    <div class="lr-activity">${escapeHtml(ev.Title)}</div>
+    <div class="lr-meta">${metaBits.join(' · ')}</div>
+    ${ev.Notes ? `<div class="lr-notes">${escapeHtml(ev.Notes)}</div>` : ''}
+  `;
+
+  const actions = document.createElement('div');
+  actions.className = 'lr-actions';
+  const completeBtn = document.createElement('button');
+  completeBtn.type = 'button';
+  completeBtn.className = 'btn accent';
+  completeBtn.textContent = 'Complete';
+  completeBtn.addEventListener('click', () => completeEvent(ev));
+  const editBtn = document.createElement('button');
+  editBtn.type = 'button';
+  editBtn.className = 'btn secondary';
+  editBtn.textContent = 'Edit';
+  editBtn.addEventListener('click', () => startEdit(ev));
+  const cancelBtn = document.createElement('button');
+  cancelBtn.type = 'button';
+  cancelBtn.className = 'btn secondary';
+  cancelBtn.textContent = 'Cancel';
+  cancelBtn.addEventListener('click', () => cancelEvent(ev));
+  const delBtn = document.createElement('button');
+  delBtn.type = 'button';
+  delBtn.className = 'btn secondary';
+  delBtn.textContent = 'Delete';
+  delBtn.addEventListener('click', () => deleteEvent(ev));
+  actions.appendChild(completeBtn);
+  actions.appendChild(editBtn);
+  actions.appendChild(cancelBtn);
+  actions.appendChild(delBtn);
+
+  row.appendChild(main);
+  row.appendChild(actions);
+  return row;
+}
+
+function startEdit(ev) {
+  editingId = ev.Id;
+  document.getElementById('form-heading').textContent = 'Edit Planned Event';
+  document.getElementById('f-id').value = ev.Id;
+  document.getElementById('f-title').value = ev.Title;
+  document.getElementById('f-activity').value = ev.ActivityId ?? '';
+  document.getElementById('f-location').value = ev.LocationId ?? '';
+  document.getElementById('f-date').value = ev.StartDateTime.slice(0, 10);
+  document.getElementById('f-time').value = timeOnly(ev.StartDateTime);
+  document.getElementById('f-end-time').value = timeOnly(ev.EndDateTime);
+  document.getElementById('f-notes').value = ev.Notes || '';
+  document.getElementById('f-cancel').style.display = 'inline-block';
+  document.getElementById('form-heading').scrollIntoView({ behavior: 'smooth' });
+}
+
+function resetForm() {
+  editingId = null;
+  document.getElementById('form-heading').textContent = 'Add a Planned Event';
+  document.getElementById('event-form').reset();
+  document.getElementById('f-id').value = '';
+  document.getElementById('f-date').value = todayStr();
+  document.getElementById('f-cancel').style.display = 'none';
+}
+
+async function onSubmit(ev) {
+  ev.preventDefault();
+  const title = document.getElementById('f-title').value.trim();
+  if (!title) { showStatus('Title is required.'); return; }
+  const payload = {
+    title,
+    activityId: document.getElementById('f-activity').value,
+    locationId: document.getElementById('f-location').value,
+    startDate: document.getElementById('f-date').value,
+    startTime: document.getElementById('f-time').value,
+    endTime: document.getElementById('f-end-time').value,
+    notes: document.getElementById('f-notes').value,
+  };
+  const btn = ev.target.querySelector('button[type="submit"]');
+  btn.disabled = true;
+  showStatus('');
+  try {
+    if (editingId) {
+      await postAction('updatePlannedEvent', { id: editingId, ...payload });
+      showStatus('Event updated.');
+    } else {
+      await postAction('addPlannedEvent', payload);
+      showStatus('Added.');
+    }
+    resetForm();
+    await load();
+  } catch (e) {
+    showStatus("Couldn't save that event — check the date and time.");
+  }
+  btn.disabled = false;
+}
+
+async function completeEvent(ev) {
+  try {
+    const res = await postAction('completePlannedEvent', { id: ev.Id });
+    showStatus(res.logId ? 'Marked complete and logged.' : 'Marked complete.');
+    await load();
+  } catch (e) {
+    showStatus("Couldn't complete that event.");
+  }
+}
+
+async function cancelEvent(ev) {
+  if (!confirm(`Cancel "${ev.Title}"?`)) return;
+  try {
+    await postAction('setPlannedEventStatus', { id: ev.Id, status: 'Cancelled' });
+    await load();
+  } catch (e) {
+    showStatus("Couldn't cancel that event.");
+  }
+}
+
+async function deleteEvent(ev) {
+  if (!confirm(`Delete "${ev.Title}"? This cannot be undone.`)) return;
+  try {
+    await postAction('deletePlannedEvent', { id: ev.Id });
+    await load();
+  } catch (e) {
+    showStatus("Couldn't delete that event.");
+  }
+}
+
+async function onApplyRange() {
+  const from = document.getElementById('r-from').value;
+  const to = document.getElementById('r-to').value;
+  const dayType = document.getElementById('r-type').value;
+  const btn = document.getElementById('range-apply');
+  btn.disabled = true;
+  showStatus('');
+  try {
+    const res = await postAction('setDayStatusRange', { from, to, dayType });
+    showStatus(`Marked ${res.days} day(s) as ${dayType}.`);
+  } catch (e) {
+    showStatus("Couldn't apply that range — check the dates.");
+  }
+  btn.disabled = false;
+}
+
+async function load() {
+  try {
+    const [actRes, locRes, evRes] = await Promise.all([
+      fetchData('activities'), fetchData('locations'), fetchData('plannedEvents', { status: 'Planned' }),
+    ]);
+    ACTIVITIES = (actRes && actRes.activities) || [];
+    LOCATIONS = (locRes && locRes.locations) || [];
+    render((evRes && evRes.events) || []);
+  } catch (e) {
+    handleError(contentEl, e);
+  }
+}
+
+(async () => {
+  await captureSso();
+  await load();
+})();
+</script>
+
+</body>
+</html>

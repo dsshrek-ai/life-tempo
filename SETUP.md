@@ -145,3 +145,24 @@ weekly heat map).
    Quarter/This Year scores, each with a Breakdown, and the weekly heat map.
    Scores need at least one active goal (not TrackOnly) linked to at least
    one activity to show anything other than "No data."
+
+## Phase 6 update
+
+Phase 6 adds Seasons, Planned Events, and a bulk date-range Day Status.
+
+1. In phpMyAdmin, run `api/schema.sql` again. It adds `lt_seasons`,
+   `lt_goal_season`, and `lt_planned_events` (all `CREATE TABLE IF NOT
+   EXISTS`, safe to re-run), plus one plain `ALTER TABLE lt_activity_log
+   ADD COLUMN planned_event_id ...` — **not idempotent**, skip it if you
+   already ran this Phase 6 block once.
+2. Re-upload `api/api.php`.
+3. Push/pull the updated front end (`plan.html` is new).
+4. On **Manage → Seasons**, add a season (e.g. "Concert Band Season", `01-01`
+   to `09-30`) and, on a goal, select it under Seasons to make that goal
+   only count while in season.
+5. On **Plan**, add an upcoming event. When it happens, click **Complete**
+   — if the event has an Activity, this also creates the ActivityLog entry
+   for it automatically. Use **Mark a Date Range** for a multi-day trip or
+   illness instead of setting each day individually on Today.
+6. Locations now show a **Navigate** link (Manage, and anywhere a location
+   appears on Today/History/Plan) that opens Google Maps.

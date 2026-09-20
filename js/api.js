@@ -136,6 +136,15 @@ function todayStr() {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
+// Local wall-clock "now" in the same 'YYYY-MM-DD HH:MM:SS' shape the API
+// stores DATETIME columns in -- deliberately NOT toISOString(), which is
+// UTC and would compare wrong against locally-entered planned-event times.
+function nowDateTimeStr() {
+  const d = new Date();
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
 // A MySQL DATETIME string ("2026-09-20 14:30:00") -> "14:30" for a <input
 // type=time>, or '' if null/empty.
 function timeOnly(dateTimeStr) {
@@ -188,13 +197,15 @@ function logRowEl(entry, onEdit, onDelete) {
   const row = document.createElement('div');
   row.className = 'log-row';
 
+  // Each piece is escaped individually (not the joined string) because
+  // the location piece is a real <a> link, not plain text.
   const timeBits = [];
-  if (entry.StartTime) timeBits.push(formatTime12h(entry.StartTime) + (entry.EndTime ? '–' + formatTime12h(entry.EndTime) : ''));
-  if (entry.DurationMinutes !== null) timeBits.push(formatDuration(entry.DurationMinutes));
-  if (entry.LocationName) timeBits.push(entry.LocationName);
-  if (entry.CostAmount !== null) timeBits.push(formatMoney(entry.CostAmount));
-  if (entry.PersonNames && entry.PersonNames.length) timeBits.push('With ' + entry.PersonNames.join(', '));
-  if (entry.LearningProjectName) timeBits.push(`${entry.LearningMode || 'Learn'}: ${entry.LearningProjectName}`);
+  if (entry.StartTime) timeBits.push(escapeHtml(formatTime12h(entry.StartTime) + (entry.EndTime ? '–' + formatTime12h(entry.EndTime) : '')));
+  if (entry.DurationMinutes !== null) timeBits.push(escapeHtml(formatDuration(entry.DurationMinutes)));
+  if (entry.LocationName) timeBits.push(locationLinkHtml(entry.LocationName, entry.LocationAddress));
+  if (entry.CostAmount !== null) timeBits.push(escapeHtml(formatMoney(entry.CostAmount)));
+  if (entry.PersonNames && entry.PersonNames.length) timeBits.push('With ' + escapeHtml(entry.PersonNames.join(', ')));
+  if (entry.LearningProjectName) timeBits.push(`${escapeHtml(entry.LearningMode || 'Learn')}: ${escapeHtml(entry.LearningProjectName)}`);
 
   const main = document.createElement('div');
   main.className = 'lr-main';
@@ -204,7 +215,7 @@ function logRowEl(entry, onEdit, onDelete) {
       ${entry.Billable ? '<span class="badge billable">Billable</span>' : ''}
       ${entry.SharedLife ? '<span class="badge tracked">Shared Life</span>' : ''}
     </div>
-    <div class="lr-meta">${escapeHtml(timeBits.join(' · '))}</div>
+    <div class="lr-meta">${timeBits.join(' · ')}</div>
     ${entry.TagNames && entry.TagNames.length ? `<div class="lr-meta">${entry.TagNames.map(t => `<span class="badge inactive">${escapeHtml(t)}</span>`).join(' ')}</div>` : ''}
     ${entry.Notes ? `<div class="lr-notes">${escapeHtml(entry.Notes)}</div>` : ''}
   `;
@@ -236,6 +247,43 @@ function multiSelectHtml(id, items, valueKey, labelKey, selectedIds) {
   const selectedSet = new Set((selectedIds || []).map(String));
   const opts = items.map(i => `<option value="${i[valueKey]}" ${selectedSet.has(String(i[valueKey])) ? 'selected' : ''}>${escapeHtml(i[labelKey])}</option>`).join('');
   return `<select id="${id}" multiple size="${Math.min(5, Math.max(3, items.length || 1))}">${opts}</select>`;
+}
+
+// ---- Phase 6 shared helpers (navigation + calendar links) ----
+
+// A Google Maps search link for a location -- prefers the street address
+// (more precise) and falls back to the location name (spec section 22:
+// "Navigate" action).
+function mapsUrl(name, address) {
+  const q = (address && address.trim()) || name || '';
+  if (!q) return null;
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`;
+}
+
+function locationLinkHtml(name, address) {
+  const url = mapsUrl(name, address);
+  if (!url || !name) return name ? escapeHtml(name) : '';
+  return `<a href="${url}" target="_blank" rel="noopener">${escapeHtml(name)} ↗</a>`;
+}
+
+// A "quick add" Google Calendar link for a planned event -- no full
+// synchronization, just a one-click way to also see it on an external
+// calendar (spec section 21/66).
+function gcalUrl(event) {
+  const start = new Date(event.StartDateTime.replace(' ', 'T'));
+  const end = event.EndDateTime
+    ? new Date(event.EndDateTime.replace(' ', 'T'))
+    : new Date(start.getTime() + 60 * 60 * 1000);
+  const pad = n => String(n).padStart(2, '0');
+  const fmt = d => `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}T${pad(d.getHours())}${pad(d.getMinutes())}00`;
+  const params = new URLSearchParams({
+    action: 'TEMPLATE',
+    text: event.Title,
+    dates: `${fmt(start)}/${fmt(end)}`,
+  });
+  if (event.LocationAddress || event.LocationName) params.set('location', event.LocationAddress || event.LocationName);
+  if (event.Notes) params.set('details', event.Notes);
+  return `https://calendar.google.com/calendar/render?${params.toString()}`;
 }
 
 function selectedValues(selectEl) {
