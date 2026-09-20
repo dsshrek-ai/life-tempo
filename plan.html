@@ -327,6 +327,7 @@ async function load() {
 
 (async () => {
   await captureSso();
+  applyNavVisibility(await loadPreferences());
   await load();
 })();
 </script>

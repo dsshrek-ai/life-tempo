@@ -404,6 +404,25 @@ ALTER TABLE lt_activity_log
   ADD KEY ix_lt_activity_log_client (user_id, client_id, activity_date),
   ADD FOREIGN KEY (client_id) REFERENCES lt_clients(id) ON DELETE SET NULL;
 
+-- ---------- FEATURE TOGGLES: per-user show/hide for optional areas ----------
+-- Not every user wants Travel or Billable/Invoice tracking cluttering their
+-- nav (spec section 46/127's UserPreferences, scoped down to exactly the
+-- two toggles asked for rather than the full first-day-of-week/time-format
+-- set nothing needs yet). No row for a user means both default to shown --
+-- a row is only written the first time someone changes a toggle.
+--
+-- This hides nav links/fields, it does not enforce access control -- a
+-- personal/family app doesn't need one user blocked from a URL, just an
+-- uncluttered nav for the areas they don't use.
+CREATE TABLE IF NOT EXISTS lt_user_preferences (
+  user_id        INT PRIMARY KEY,
+  show_travel    TINYINT(1) NOT NULL DEFAULT 1,
+  show_billable  TINYINT(1) NOT NULL DEFAULT 1,
+  created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- ============================================================
 -- BOOTSTRAP (run once, after you've signed up through My Apps Hub):
 --
@@ -437,4 +456,8 @@ ALTER TABLE lt_activity_log
 -- 8) On Trips, plan a trip with stops and expenses. On Manage's Clients
 --    section, add a client, then attribute billable log entries to it and
 --    check Reports for billable hours/amount and CSV export.
+--
+-- 9) If you don't need Travel or Billable/Invoice tracking, turn either
+--    off on Manage's Settings section -- it hides the related nav links
+--    and fields without deleting anything already entered.
 -- ============================================================

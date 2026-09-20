@@ -45,6 +45,7 @@ let CLIENTS = [];
 let UPCOMING = [];
 let editingId = null;
 let DAY_STATUS = { DayType: 'Home' };
+let PREFS = { ShowTravel: true, ShowBillable: true };
 
 const DAY_TYPES = ['Home', 'Local Outing', 'Travel', 'Vacation', 'Sick', 'Special Event'];
 
@@ -175,13 +176,14 @@ function renderShell(todayEntries) {
               <option value="Apply">Apply</option>
             </select>
           </div>
+          ${PREFS.ShowBillable ? `
           <div>
             <label for="f-client">Client (if billable)</label>
             <select id="f-client">
               <option value="">(none)</option>
               ${optionsHtml(CLIENTS.filter(c => c.Active), 'Id', 'Name')}
             </select>
-          </div>
+          </div>` : ''}
         </div>
 
         <label for="f-notes">Notes</label>
@@ -263,7 +265,7 @@ function startEdit(entry) {
   document.getElementById('f-shared-life').checked = !!entry.SharedLife;
   document.getElementById('f-learning-project').value = entry.LearningProjectId ?? '';
   document.getElementById('f-learning-mode').value = entry.LearningMode || 'Learn';
-  document.getElementById('f-client').value = entry.ClientId ?? '';
+  if (PREFS.ShowBillable) document.getElementById('f-client').value = entry.ClientId ?? '';
   setMultiSelectValues('f-people', entry.PersonIds || []);
   setMultiSelectValues('f-tags', entry.TagIds || []);
   document.getElementById('f-cancel').style.display = 'inline-block';
@@ -312,7 +314,7 @@ async function onSubmit(ev) {
     sharedLife: document.getElementById('f-shared-life').checked,
     learningProjectId: document.getElementById('f-learning-project').value,
     learningMode: document.getElementById('f-learning-mode').value,
-    clientId: document.getElementById('f-client').value,
+    clientId: PREFS.ShowBillable ? document.getElementById('f-client').value : '',
     personIds: selectedValues(document.getElementById('f-people')),
     tagIds: selectedValues(document.getElementById('f-tags')),
   };
@@ -371,10 +373,10 @@ async function loadToday() {
 
 async function load() {
   try {
-    const [actRes, locRes, dayRes, personRes, tagRes, lpRes, evRes, clientRes] = await Promise.all([
+    const [actRes, locRes, dayRes, personRes, tagRes, lpRes, evRes, clientRes, prefs] = await Promise.all([
       fetchData('activities'), fetchData('locations'), fetchData('dayStatus'),
       fetchData('people'), fetchData('tags'), fetchData('learningProjects'),
-      fetchData('plannedEvents', { status: 'Planned' }), fetchData('clients'),
+      fetchData('plannedEvents', { status: 'Planned' }), fetchData('clients'), loadPreferences(),
     ]);
     ACTIVITIES = (actRes && actRes.activities) || [];
     LOCATIONS = (locRes && locRes.locations) || [];
@@ -383,6 +385,8 @@ async function load() {
     TAGS = (tagRes && tagRes.tags) || [];
     LEARNING_PROJECTS = (lpRes && lpRes.learningProjects) || [];
     CLIENTS = (clientRes && clientRes.clients) || [];
+    PREFS = prefs;
+    applyNavVisibility(PREFS);
     UPCOMING = ((evRes && evRes.events) || []).filter(e => e.StartDateTime >= nowDateTimeStr());
     await loadToday();
   } catch (e) {

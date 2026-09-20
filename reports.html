@@ -38,6 +38,7 @@ const contentEl = document.getElementById('content');
 
 let LAST_REPORT = null;
 let LAST_TRIPS = [];
+let PREFS = { ShowTravel: true, ShowBillable: true };
 
 function showStatus(msg) {
   if (!msg) { statusEl.style.display = 'none'; return; }
@@ -53,41 +54,51 @@ function defaultFrom() {
 }
 
 function render() {
+  if (!PREFS.ShowBillable && !PREFS.ShowTravel) {
+    contentEl.innerHTML = `<div class="note">Both Travel and Billable/Invoice are turned off in <a href="manage.html">Settings</a> — nothing to report on. Turn one back on to see it here.</div>`;
+    return;
+  }
   contentEl.innerHTML = `
-    <div class="card">
-      <h3>Billable Report</h3>
-      <p class="note">Hours and amount from entries marked Billable, grouped by Client (set on Today/History).</p>
-      <div class="form-grid">
-        <div>
-          <label for="r-from">From</label>
-          <input type="date" id="r-from" value="${defaultFrom()}">
+    ${PREFS.ShowBillable ? `
+      <div class="card">
+        <h3>Billable Report</h3>
+        <p class="note">Hours and amount from entries marked Billable, grouped by Client (set on Today/History).</p>
+        <div class="form-grid">
+          <div>
+            <label for="r-from">From</label>
+            <input type="date" id="r-from" value="${defaultFrom()}">
+          </div>
+          <div>
+            <label for="r-to">To</label>
+            <input type="date" id="r-to" value="${todayStr()}">
+          </div>
         </div>
-        <div>
-          <label for="r-to">To</label>
-          <input type="date" id="r-to" value="${todayStr()}">
-        </div>
-      </div>
-      <p>
-        <button type="button" class="btn" id="r-run">Run</button>
-        <button type="button" class="btn secondary" id="r-export" style="display:none;">Download CSV</button>
-      </p>
-      <div id="report-result"></div>
-    </div>
+        <p>
+          <button type="button" class="btn" id="r-run">Run</button>
+          <button type="button" class="btn secondary" id="r-export" style="display:none;">Download CSV</button>
+        </p>
+        <div id="report-result"></div>
+      </div>` : ''}
 
-    <div class="card">
-      <h3>Trips Export</h3>
-      <p class="note">Every trip you've planned or taken, with estimated/actual miles and cost.</p>
-      <p><button type="button" class="btn secondary" id="trips-export">Download Trips CSV</button></p>
-    </div>
+    ${PREFS.ShowTravel ? `
+      <div class="card">
+        <h3>Trips Export</h3>
+        <p class="note">Every trip you've planned or taken, with estimated/actual miles and cost.</p>
+        <p><button type="button" class="btn secondary" id="trips-export">Download Trips CSV</button></p>
+      </div>` : ''}
 
     <div class="card">
       <p class="note">Looking for a full activity log export? That's on <a href="history.html">History</a> — filter the date range there, then Download CSV.</p>
     </div>
   `;
 
-  document.getElementById('r-run').addEventListener('click', runReport);
-  document.getElementById('r-export').addEventListener('click', exportReport);
-  document.getElementById('trips-export').addEventListener('click', exportTrips);
+  if (PREFS.ShowBillable) {
+    document.getElementById('r-run').addEventListener('click', runReport);
+    document.getElementById('r-export').addEventListener('click', exportReport);
+  }
+  if (PREFS.ShowTravel) {
+    document.getElementById('trips-export').addEventListener('click', exportTrips);
+  }
 }
 
 function renderReport(report) {
@@ -165,6 +176,8 @@ async function exportTrips() {
   await captureSso();
   try {
     await fetchData('ping');
+    PREFS = await loadPreferences();
+    applyNavVisibility(PREFS);
     render();
   } catch (e) {
     handleError(contentEl, e);

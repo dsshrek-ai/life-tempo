@@ -317,6 +317,30 @@ function downloadCsv(filename, columns, rows) {
   URL.revokeObjectURL(url);
 }
 
+// ---- Feature toggles (per-user show/hide for Travel and Billable) ----
+// Every page calls loadPreferences() alongside its other startup fetches,
+// then applyNavVisibility() to hide the Trips/Reports nav links that don't
+// apply. This only hides UI -- it is not an access boundary (see
+// schema.sql), so a page doesn't need to re-check it before acting.
+
+async function loadPreferences() {
+  try {
+    const res = await fetchData('preferences');
+    return { ShowTravel: res.ShowTravel !== false, ShowBillable: res.ShowBillable !== false };
+  } catch (e) {
+    return { ShowTravel: true, ShowBillable: true }; // fail open -- never block on this
+  }
+}
+
+function applyNavVisibility(prefs) {
+  const hide = href => {
+    const link = document.querySelector(`header.site-header nav a[href="${href}"]`);
+    if (link) link.style.display = 'none';
+  };
+  if (!prefs.ShowTravel) hide('trips.html');
+  if (!prefs.ShowTravel && !prefs.ShowBillable) hide('reports.html');
+}
+
 // ---- Phase 3 shared helpers (Dashboard / Today's day-status) ----
 
 function goalStatusClass(status) {

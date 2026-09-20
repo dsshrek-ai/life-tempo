@@ -43,6 +43,7 @@ let TAGS = [];
 let LEARNING_PROJECTS = [];
 let CLIENTS = [];
 let CURRENT_ENTRIES = [];
+let PREFS = { ShowTravel: true, ShowBillable: true };
 let editingId = null;
 
 function showStatus(msg) {
@@ -153,13 +154,14 @@ function renderShell() {
               <option value="Apply">Apply</option>
             </select>
           </div>
+          ${PREFS.ShowBillable ? `
           <div>
             <label for="f-client">Client (if billable)</label>
             <select id="f-client">
               <option value="">(none)</option>
               ${optionsHtml(CLIENTS.filter(c => c.Active), 'Id', 'Name')}
             </select>
-          </div>
+          </div>` : ''}
         </div>
 
         <label for="f-notes">Notes</label>
@@ -207,7 +209,7 @@ function exportCsv() {
     { label: 'Location', value: 'LocationName' },
     { label: 'Productive', value: e => e.Productive ? 'Yes' : 'No' },
     { label: 'Billable', value: e => e.Billable ? 'Yes' : 'No' },
-    { label: 'Client', value: 'ClientName' },
+    ...(PREFS.ShowBillable ? [{ label: 'Client', value: 'ClientName' }] : []),
     { label: 'Cost', value: 'CostAmount' },
     { label: 'Shared Life', value: e => e.SharedLife ? 'Yes' : 'No' },
     { label: 'With', value: e => (e.PersonNames || []).join('; ') },
@@ -249,7 +251,7 @@ function startEdit(entry) {
   document.getElementById('f-shared-life').checked = !!entry.SharedLife;
   document.getElementById('f-learning-project').value = entry.LearningProjectId ?? '';
   document.getElementById('f-learning-mode').value = entry.LearningMode || 'Learn';
-  document.getElementById('f-client').value = entry.ClientId ?? '';
+  if (PREFS.ShowBillable) document.getElementById('f-client').value = entry.ClientId ?? '';
   setMultiSelectValues('f-people', entry.PersonIds || []);
   setMultiSelectValues('f-tags', entry.TagIds || []);
   document.getElementById('edit-card').scrollIntoView({ behavior: 'smooth' });
@@ -295,7 +297,7 @@ async function onSubmit(ev) {
     sharedLife: document.getElementById('f-shared-life').checked,
     learningProjectId: document.getElementById('f-learning-project').value,
     learningMode: document.getElementById('f-learning-mode').value,
-    clientId: document.getElementById('f-client').value,
+    clientId: PREFS.ShowBillable ? document.getElementById('f-client').value : '',
     personIds: selectedValues(document.getElementById('f-people')),
     tagIds: selectedValues(document.getElementById('f-tags')),
   };
@@ -326,9 +328,10 @@ async function loadEntries() {
 
 async function load() {
   try {
-    const [actRes, locRes, personRes, tagRes, lpRes, clientRes] = await Promise.all([
+    const [actRes, locRes, personRes, tagRes, lpRes, clientRes, prefs] = await Promise.all([
       fetchData('activities'), fetchData('locations'),
       fetchData('people'), fetchData('tags'), fetchData('learningProjects'), fetchData('clients'),
+      loadPreferences(),
     ]);
     ACTIVITIES = (actRes && actRes.activities) || [];
     LOCATIONS = (locRes && locRes.locations) || [];
@@ -336,6 +339,8 @@ async function load() {
     TAGS = (tagRes && tagRes.tags) || [];
     LEARNING_PROJECTS = (lpRes && lpRes.learningProjects) || [];
     CLIENTS = (clientRes && clientRes.clients) || [];
+    PREFS = prefs;
+    applyNavVisibility(PREFS);
     renderShell();
     await loadEntries();
   } catch (e) {

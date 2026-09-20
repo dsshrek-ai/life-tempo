@@ -186,3 +186,17 @@ Phase 7 adds Trips, Clients, billable reporting, and CSV export.
 6. Check **Reports** for the Billable Report (by client, by date range) and
    CSV export for it and for Trips. **History** also got its own **Download
    CSV** button for the currently filtered activity log.
+
+## Feature toggles update
+
+Adds `lt_user_preferences` and Manage's Settings section for turning Travel
+or Billable/Invoice off per user.
+
+1. In phpMyAdmin, run `api/schema.sql` again — it only adds
+   `lt_user_preferences` (`CREATE TABLE IF NOT EXISTS`, safe to re-run).
+2. Re-upload `api/api.php`.
+3. Push/pull the updated front end (no new pages, all 8 existing ones got a
+   small preferences check added).
+4. On **Manage → Settings**, turn off Travel and/or Billable/Invoice for any
+   login that doesn't need them. Nothing already entered is deleted, and
+   the hidden nav links/fields come right back if turned on again.

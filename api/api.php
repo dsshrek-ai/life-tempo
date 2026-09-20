@@ -46,6 +46,11 @@
 // shared partner account, and notifications were explicitly declined.
 // CSV export itself needs no server code -- it's built client-side from
 // data these existing GET actions already return.
+//
+// Feature toggles (getPreferences/setPreferences) let a user hide the
+// Travel and Billable/Invoice areas they don't use -- this only affects
+// what the front end shows (nav links, form fields); every action above
+// still works if called directly, since this isn't an access boundary.
 
 require_once __DIR__ . '/config.php';
 
@@ -1693,6 +1698,38 @@ function deleteTripExpense(int $userId, int $tripId, int $expenseId): void {
   $stmt->close();
 }
 
+// ---- Feature toggles (per-user show/hide) ----
+//
+// No row for a user means both toggles default to on -- a row only exists
+// once someone has actually changed one, same "absence means default"
+// pattern as lt_day_status. This hides nav links/fields client-side; it is
+// not an access-control boundary (see schema.sql).
+
+function getPreferences(int $userId): array {
+  $stmt = db()->prepare('SELECT show_travel, show_billable FROM lt_user_preferences WHERE user_id = ?');
+  $stmt->bind_param('i', $userId);
+  $stmt->execute();
+  $row = $stmt->get_result()->fetch_assoc();
+  $stmt->close();
+  if (!$row) {
+    return ['ShowTravel' => true, 'ShowBillable' => true];
+  }
+  return ['ShowTravel' => (bool)$row['show_travel'], 'ShowBillable' => (bool)$row['show_billable']];
+}
+
+function setPreferences(int $userId, array $b): array {
+  $showTravel = !empty($b['showTravel']) ? 1 : 0;
+  $showBillable = !empty($b['showBillable']) ? 1 : 0;
+  $stmt = db()->prepare(
+    'INSERT INTO lt_user_preferences (user_id, show_travel, show_billable) VALUES (?, ?, ?)
+     ON DUPLICATE KEY UPDATE show_travel = VALUES(show_travel), show_billable = VALUES(show_billable)'
+  );
+  $stmt->bind_param('iii', $userId, $showTravel, $showBillable);
+  $stmt->execute();
+  $stmt->close();
+  return ['ShowTravel' => (bool)$showTravel, 'ShowBillable' => (bool)$showBillable];
+}
+
 // ---- Router ----
 
 $method = $_SERVER['REQUEST_METHOD'];
@@ -2192,6 +2229,18 @@ switch ($action) {
     if ($tripId <= 0 || $id <= 0) { fail('Missing trip or expense id'); }
     deleteTripExpense((int)$user['id'], $tripId, $id);
     respond(['ok' => true]);
+  }
+
+  // -- Feature toggles --
+
+  case 'preferences': {
+    $user = requireMember();
+    respond(['ok' => true] + getPreferences((int)$user['id']));
+  }
+
+  case 'setPreferences': {
+    $user = requireMember();
+    respond(['ok' => true] + setPreferences((int)$user['id'], $body));
   }
 
   default:

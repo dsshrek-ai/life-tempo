@@ -45,6 +45,7 @@ let TAGS = [];
 let LEARNING_PROJECTS = [];
 let SEASONS = [];
 let CLIENTS = [];
+let PREFS = { ShowTravel: true, ShowBillable: true };
 
 const GOAL_TYPE_OPTS = ['Minimum', 'Target', 'Maximum', 'TrackOnly'];
 const CADENCE_TYPE_OPTS = ['Daily', 'Weekly', 'Monthly'];
@@ -561,10 +562,48 @@ async function handleLearningProjectAction(btn) {
   }
 }
 
+// ---------------- Settings (feature toggles) ----------------
+
+function renderSettings() {
+  return `
+    <div class="checkline">
+      <input type="checkbox" id="pref-travel" ${PREFS.ShowTravel ? 'checked' : ''}>
+      <label for="pref-travel">Travel — Trips nav item, trip planning/stops/expenses</label>
+    </div>
+    <div class="checkline">
+      <input type="checkbox" id="pref-billable" ${PREFS.ShowBillable ? 'checked' : ''}>
+      <label for="pref-billable">Billable/Invoice — Clients (below), the Client field on log entries, and the Billable Report</label>
+    </div>
+    <p><button type="button" class="btn secondary" id="save-settings">Save</button></p>
+  `;
+}
+
+async function handleSettingsSave() {
+  const showTravel = document.getElementById('pref-travel').checked;
+  const showBillable = document.getElementById('pref-billable').checked;
+  const btn = document.getElementById('save-settings');
+  btn.disabled = true;
+  showStatus('');
+  try {
+    PREFS = await postAction('setPreferences', { showTravel, showBillable });
+    applyNavVisibility(PREFS);
+    showStatus('Settings saved.');
+    render();
+  } catch (e) {
+    showStatus("Couldn't save settings.");
+    btn.disabled = false;
+  }
+}
+
 // ---------------- Shell ----------------
 
 function render() {
   contentEl.innerHTML = `
+    <div class="card">
+      <h3>Settings</h3>
+      <p class="note">Hide areas you don't use. This only hides nav links and fields — nothing you've already entered is deleted, and turning a toggle back on brings it right back.</p>
+      ${renderSettings()}
+    </div>
     <div class="card">
       <h3>Categories</h3>
       <p class="note">Broad life areas (Health, Spiritual, Music, ...) used to group activities for later reporting.</p>
@@ -605,12 +644,14 @@ function render() {
       <p class="note">Group related learning (Photography, Genealogy, ...). Attach one to a log entry along with Learn/Apply to distinguish instruction from practice.</p>
       <div id="lp-table">${renderLearningProjects()}</div>
     </div>
-    <div class="card">
-      <h3>Clients</h3>
-      <p class="note">Who billable work is for. Attribute a billable log entry to a client on Today/History, then check <a href="reports.html">Reports</a> for billable hours/amount by client.</p>
-      <div id="client-table">${renderClients()}</div>
-    </div>
+    ${PREFS.ShowBillable ? `
+      <div class="card">
+        <h3>Clients</h3>
+        <p class="note">Who billable work is for. Attribute a billable log entry to a client on Today/History, then check <a href="reports.html">Reports</a> for billable hours/amount by client.</p>
+        <div id="client-table">${renderClients()}</div>
+      </div>` : ''}
   `;
+  document.getElementById('save-settings').addEventListener('click', handleSettingsSave);
   contentEl.querySelectorAll('[data-act^="save-cat"], [data-act="add-cat"]').forEach(b => b.addEventListener('click', () => handleCategoryAction(b)));
   contentEl.querySelectorAll('[data-act^="save-loc"], [data-act="add-loc"]').forEach(b => b.addEventListener('click', () => handleLocationAction(b)));
   contentEl.querySelectorAll('[data-act^="save-act"], [data-act="add-act"]').forEach(b => b.addEventListener('click', () => handleActivityAction(b)));
@@ -623,10 +664,10 @@ function render() {
 }
 
 async function reloadAll() {
-  const [catRes, locRes, actRes, goalRes, personRes, tagRes, lpRes, seasonRes, clientRes] = await Promise.all([
+  const [catRes, locRes, actRes, goalRes, personRes, tagRes, lpRes, seasonRes, clientRes, prefs] = await Promise.all([
     fetchData('categories'), fetchData('locations'), fetchData('activities'), fetchData('goals'),
     fetchData('people'), fetchData('tags'), fetchData('learningProjects'), fetchData('seasons'),
-    fetchData('clients'),
+    fetchData('clients'), loadPreferences(),
   ]);
   CATEGORIES = (catRes && catRes.categories) || [];
   LOCATIONS = (locRes && locRes.locations) || [];
@@ -637,6 +678,8 @@ async function reloadAll() {
   LEARNING_PROJECTS = (lpRes && lpRes.learningProjects) || [];
   SEASONS = (seasonRes && seasonRes.seasons) || [];
   CLIENTS = (clientRes && clientRes.clients) || [];
+  PREFS = prefs;
+  applyNavVisibility(PREFS);
   render();
 }
 

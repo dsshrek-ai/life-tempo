@@ -38,6 +38,7 @@ const contentEl = document.getElementById('content');
 
 let LOCATIONS = [];
 let TRIPS = [];
+let PREFS = { ShowTravel: true, ShowBillable: true };
 let editingId = null;
 const EXPENSE_TYPES = ['Fuel', 'Lodging', 'Meals', 'Admission', 'Parking', 'Supplies', 'Other'];
 
@@ -58,6 +59,7 @@ function formatDateRange(start, end) {
 
 function render() {
   contentEl.innerHTML = `
+    ${!PREFS.ShowTravel ? `<div class="note">Travel is turned off in <a href="manage.html">Settings</a> — this page still works, but Trips won't appear in your nav.</div>` : ''}
     <div class="card">
       <h3 id="form-heading">Plan a Trip</h3>
       <form id="trip-form">
@@ -409,6 +411,8 @@ async function load() {
 
 (async () => {
   await captureSso();
+  PREFS = await loadPreferences();
+  applyNavVisibility(PREFS);
   await load();
 })();
 </script>

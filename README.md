@@ -34,6 +34,17 @@ enough for reporting), full Google Calendar sync (the Phase 6 "Add to
 Google Calendar" quick-add link covers most of the practical need), a
 shared partner account, and notifications.
 
+## Feature toggles
+
+Not every user of this app wants Travel or Billable/Invoice tracking. On
+**Manage → Settings**, either can be turned off — this hides the related nav
+link(s) and form fields (Trips; Reports' Billable Report/Trips Export;
+Manage's Clients section; the Client field on Today/History) without
+deleting anything already entered, and turning a toggle back on brings it
+right back. This is UI-only, not an access boundary (a personal/family app
+doesn't need one user blocked from a URL, just an uncluttered nav for the
+areas they don't use) — see `api/schema.sql`'s `lt_user_preferences` comment.
+
 ## Next
 
 There is no Phase 8 in the spec — Phase 7 is the end of the documented
