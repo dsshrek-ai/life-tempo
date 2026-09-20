@@ -43,9 +43,12 @@ header.site-header h1 { margin: 0; font-size: 1.5rem; }
 header.site-header nav {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.5rem;
+  /* Spacing is done with margin on the links below, not `gap` -- some
+     mobile Safari versions are flaky applying flex gap to wrapped rows,
+     which is what caused the pills to touch/overlap on iPhone. */
 }
 header.site-header nav a {
+  display: inline-block;
   color: #fff;
   text-decoration: none;
   background: var(--primary-dark);
@@ -53,6 +56,7 @@ header.site-header nav a {
   border-radius: var(--radius);
   font-size: 0.95rem;
   white-space: nowrap;
+  margin: 0.25rem 0.25rem 0 0;
 }
 header.site-header nav a[aria-current="page"] { background: var(--accent); }
 header.site-header nav a.disabled { opacity: 0.5; cursor: default; pointer-events: none; }
