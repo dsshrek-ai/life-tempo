@@ -39,6 +39,13 @@
 // (completing one creates its ActivityLog entry automatically, tying the
 // two together via planned_event_id), and setDayStatusRange() for marking
 // a whole trip/vacation at once instead of day by day.
+//
+// Phase 7 (Travel, Contract Work, and CSV Export) adds Trip/TripStop/
+// TripExpense and Client (for billableReport()'s grouping) -- scoped down
+// to just what was asked for; WorkProject/Invoice, full calendar sync, a
+// shared partner account, and notifications were explicitly declined.
+// CSV export itself needs no server code -- it's built client-side from
+// data these existing GET actions already return.
 
 require_once __DIR__ . '/config.php';
 
@@ -429,7 +436,7 @@ function listActivityLog(int $userId, string $from, string $to, ?int $activityId
                  al.start_time, al.end_time, al.duration_minutes, al.location_id,
                  l.name AS location_name, l.address AS location_address, al.productive, al.billable, al.shared_life,
                  al.cost_amount, al.notes, al.learning_project_id, lp.name AS learning_project_name,
-                 al.learning_mode,
+                 al.learning_mode, al.client_id, cl.name AS client_name,
                  (SELECT GROUP_CONCAT(alp.person_id) FROM lt_activity_log_person alp WHERE alp.activity_log_id = al.id) AS person_ids,
                  (SELECT GROUP_CONCAT(p.display_name SEPARATOR \'||\') FROM lt_activity_log_person alp2 JOIN lt_people p ON p.id = alp2.person_id WHERE alp2.activity_log_id = al.id) AS person_names,
                  (SELECT GROUP_CONCAT(alt.tag_id) FROM lt_activity_log_tag alt WHERE alt.activity_log_id = al.id) AS tag_ids,
@@ -438,6 +445,7 @@ function listActivityLog(int $userId, string $from, string $to, ?int $activityId
           JOIN lt_activities a ON a.id = al.activity_id
           LEFT JOIN lt_locations l ON l.id = al.location_id
           LEFT JOIN lt_learning_projects lp ON lp.id = al.learning_project_id
+          LEFT JOIN lt_clients cl ON cl.id = al.client_id
           WHERE al.user_id = ? AND al.activity_date BETWEEN ? AND ?';
   $types = 'iss';
   $params = [$userId, $from, $to];
@@ -472,6 +480,8 @@ function listActivityLog(int $userId, string $from, string $to, ?int $activityId
       'LearningProjectId' => $r['learning_project_id'] !== null ? (int)$r['learning_project_id'] : null,
       'LearningProjectName' => (string)($r['learning_project_name'] ?? ''),
       'LearningMode' => $r['learning_mode'],
+      'ClientId' => $r['client_id'] !== null ? (int)$r['client_id'] : null,
+      'ClientName' => (string)($r['client_name'] ?? ''),
       'PersonIds' => $r['person_ids'] ? array_map('intval', explode(',', $r['person_ids'])) : [],
       'PersonNames' => $r['person_names'] ? explode('||', $r['person_names']) : [],
       'TagIds' => $r['tag_ids'] ? array_map('intval', explode(',', $r['tag_ids'])) : [],
@@ -500,26 +510,27 @@ function activityLogFields(int $userId, array $b): array {
   $notes = nullIfEmpty((string)($b['notes'] ?? ''));
   $learningProjectId = ownedId('lt_learning_projects', isset($b['learningProjectId']) && $b['learningProjectId'] !== '' ? (int)$b['learningProjectId'] : null, $userId);
   $learningMode = $learningProjectId !== null ? normEnum((string)($b['learningMode'] ?? ''), LEARNING_MODES, 'Learn') : null;
+  $clientId = ownedId('lt_clients', isset($b['clientId']) && $b['clientId'] !== '' ? (int)$b['clientId'] : null, $userId);
   $personIds = ownedIdsIn('lt_people', $userId, $b['personIds'] ?? []);
   $tagIds = ownedIdsIn('lt_tags', $userId, $b['tagIds'] ?? []);
   return [$activityId, $date, $startTime, $endTime, $duration, $locationId, $productive, $billable,
-          $sharedLife, $costAmount, $notes, $learningProjectId, $learningMode, $personIds, $tagIds];
+          $sharedLife, $costAmount, $notes, $learningProjectId, $learningMode, $clientId, $personIds, $tagIds];
 }
 
 function addActivityLog(int $userId, array $b): int {
   [$activityId, $date, $startTime, $endTime, $duration, $locationId, $productive, $billable,
-   $sharedLife, $costAmount, $notes, $learningProjectId, $learningMode, $personIds, $tagIds] = activityLogFields($userId, $b);
+   $sharedLife, $costAmount, $notes, $learningProjectId, $learningMode, $clientId, $personIds, $tagIds] = activityLogFields($userId, $b);
   if ($activityId === null) { fail('A valid activity is required'); }
   $pairs = [
     ['i', $userId], ['i', $activityId], ['s', $date], ['s', $startTime], ['s', $endTime],
     ['i', $duration], ['i', $locationId], ['i', $productive], ['i', $billable], ['i', $sharedLife],
-    ['d', $costAmount], ['s', $notes], ['i', $learningProjectId], ['s', $learningMode],
+    ['d', $costAmount], ['s', $notes], ['i', $learningProjectId], ['s', $learningMode], ['i', $clientId],
   ];
   $stmt = db()->prepare(
     'INSERT INTO lt_activity_log
       (user_id, activity_id, activity_date, start_time, end_time, duration_minutes, location_id,
-       productive, billable, shared_life, cost_amount, notes, learning_project_id, learning_mode)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+       productive, billable, shared_life, cost_amount, notes, learning_project_id, learning_mode, client_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
   );
   $stmt->bind_param(implode('', array_column($pairs, 0)), ...array_column($pairs, 1));
   $stmt->execute();
@@ -532,18 +543,18 @@ function addActivityLog(int $userId, array $b): int {
 
 function updateActivityLog(int $userId, int $id, array $b): void {
   [$activityId, $date, $startTime, $endTime, $duration, $locationId, $productive, $billable,
-   $sharedLife, $costAmount, $notes, $learningProjectId, $learningMode, $personIds, $tagIds] = activityLogFields($userId, $b);
+   $sharedLife, $costAmount, $notes, $learningProjectId, $learningMode, $clientId, $personIds, $tagIds] = activityLogFields($userId, $b);
   if ($activityId === null) { fail('A valid activity is required'); }
   $pairs = [
     ['i', $activityId], ['s', $date], ['s', $startTime], ['s', $endTime], ['i', $duration],
     ['i', $locationId], ['i', $productive], ['i', $billable], ['i', $sharedLife], ['d', $costAmount],
-    ['s', $notes], ['i', $learningProjectId], ['s', $learningMode], ['i', $id], ['i', $userId],
+    ['s', $notes], ['i', $learningProjectId], ['s', $learningMode], ['i', $clientId], ['i', $id], ['i', $userId],
   ];
   $stmt = db()->prepare(
     'UPDATE lt_activity_log
      SET activity_id = ?, activity_date = ?, start_time = ?, end_time = ?, duration_minutes = ?,
          location_id = ?, productive = ?, billable = ?, shared_life = ?, cost_amount = ?, notes = ?,
-         learning_project_id = ?, learning_mode = ?
+         learning_project_id = ?, learning_mode = ?, client_id = ?
      WHERE id = ? AND user_id = ?'
   );
   $stmt->bind_param(implode('', array_column($pairs, 0)), ...array_column($pairs, 1));
@@ -1395,6 +1406,293 @@ function setDayStatusRange(int $userId, string $from, string $to, string $dayTyp
   return $days + 1;
 }
 
+// ---- Phase 7: Clients (billable-work reporting) ----
+
+function listClients(int $userId): array {
+  $stmt = db()->prepare('SELECT id, name, notes, active FROM lt_clients WHERE user_id = ? ORDER BY active DESC, name');
+  $stmt->bind_param('i', $userId);
+  $stmt->execute();
+  $res = $stmt->get_result();
+  $out = [];
+  while ($r = $res->fetch_assoc()) {
+    $out[] = ['Id' => (int)$r['id'], 'Name' => (string)$r['name'], 'Notes' => (string)($r['notes'] ?? ''), 'Active' => (bool)$r['active']];
+  }
+  $stmt->close();
+  return $out;
+}
+
+function addClient(int $userId, array $b): int {
+  $name = trim((string)($b['name'] ?? ''));
+  if ($name === '') { fail('Client name is required'); }
+  $notes = nullIfEmpty((string)($b['notes'] ?? ''));
+  try {
+    $stmt = db()->prepare('INSERT INTO lt_clients (user_id, name, notes) VALUES (?, ?, ?)');
+    $stmt->bind_param('iss', $userId, $name, $notes);
+    $stmt->execute();
+    $id = $stmt->insert_id;
+    $stmt->close();
+    return $id;
+  } catch (mysqli_sql_exception $e) {
+    duplicateNameFail($e, 'client');
+  }
+}
+
+function updateClient(int $userId, int $id, array $b): void {
+  $name = trim((string)($b['name'] ?? ''));
+  if ($name === '') { fail('Client name is required'); }
+  $notes = nullIfEmpty((string)($b['notes'] ?? ''));
+  $active = !empty($b['active']) ? 1 : 0;
+  try {
+    $stmt = db()->prepare('UPDATE lt_clients SET name = ?, notes = ?, active = ? WHERE id = ? AND user_id = ?');
+    $stmt->bind_param('ssiii', $name, $notes, $active, $id, $userId);
+    $stmt->execute();
+    $stmt->close();
+  } catch (mysqli_sql_exception $e) {
+    duplicateNameFail($e, 'client');
+  }
+}
+
+// Billable hours/amount grouped by client for a date range -- the whole
+// "reporting" half of Contract Work (spec section 27/136), built entirely
+// from the Billable flag and cost_amount/duration_minutes ActivityLog has
+// had since Phase 2, plus the client_id attribution added this phase.
+function billableReport(int $userId, string $from, string $to): array {
+  $stmt = db()->prepare(
+    'SELECT al.client_id, c.name AS client_name, COUNT(*) AS entry_count,
+            COALESCE(SUM(al.duration_minutes), 0) AS total_minutes,
+            COALESCE(SUM(al.cost_amount), 0) AS total_amount
+     FROM lt_activity_log al
+     LEFT JOIN lt_clients c ON c.id = al.client_id
+     WHERE al.user_id = ? AND al.billable = 1 AND al.activity_date BETWEEN ? AND ?
+     GROUP BY al.client_id, c.name
+     ORDER BY c.name IS NULL, c.name'
+  );
+  $stmt->bind_param('iss', $userId, $from, $to);
+  $stmt->execute();
+  $res = $stmt->get_result();
+  $rows = [];
+  $totalMinutes = 0;
+  $totalAmount = 0.0;
+  while ($r = $res->fetch_assoc()) {
+    $minutes = (int)$r['total_minutes'];
+    $amount = (float)$r['total_amount'];
+    $totalMinutes += $minutes;
+    $totalAmount += $amount;
+    $rows[] = [
+      'ClientId' => $r['client_id'] !== null ? (int)$r['client_id'] : null,
+      'ClientName' => $r['client_name'] ?? '(no client)',
+      'EntryCount' => (int)$r['entry_count'],
+      'TotalMinutes' => $minutes,
+      'TotalAmount' => $amount,
+    ];
+  }
+  $stmt->close();
+  return ['Rows' => $rows, 'TotalMinutes' => $totalMinutes, 'TotalAmount' => $totalAmount];
+}
+
+// ---- Phase 7: Trips ----
+
+const TRIP_STATUSES = ['Planned', 'Completed', 'Cancelled'];
+const EXPENSE_TYPES = ['Fuel', 'Lodging', 'Meals', 'Admission', 'Parking', 'Supplies', 'Other'];
+
+function listTrips(int $userId): array {
+  $stmt = db()->prepare(
+    'SELECT t.id, t.name, t.purpose, t.start_date, t.end_date, t.estimated_miles, t.actual_miles,
+            t.estimated_cost, t.status, t.notes,
+            (SELECT COALESCE(SUM(e.amount), 0) FROM lt_trip_expenses e WHERE e.trip_id = t.id) AS actual_cost
+     FROM lt_trips t WHERE t.user_id = ? ORDER BY t.start_date DESC'
+  );
+  $stmt->bind_param('i', $userId);
+  $stmt->execute();
+  $res = $stmt->get_result();
+  $out = [];
+  while ($r = $res->fetch_assoc()) {
+    $out[] = [
+      'Id' => (int)$r['id'],
+      'Name' => (string)$r['name'],
+      'Purpose' => (string)($r['purpose'] ?? ''),
+      'StartDate' => (string)$r['start_date'],
+      'EndDate' => $r['end_date'],
+      'EstimatedMiles' => $r['estimated_miles'] !== null ? (float)$r['estimated_miles'] : null,
+      'ActualMiles' => $r['actual_miles'] !== null ? (float)$r['actual_miles'] : null,
+      'EstimatedCost' => $r['estimated_cost'] !== null ? (float)$r['estimated_cost'] : null,
+      'ActualCost' => (float)$r['actual_cost'],
+      'Status' => (string)$r['status'],
+      'Notes' => (string)($r['notes'] ?? ''),
+    ];
+  }
+  $stmt->close();
+  return $out;
+}
+
+function tripFields(array $b): array {
+  $name = trim((string)($b['name'] ?? ''));
+  if ($name === '') { fail('Trip name is required'); }
+  $purpose = nullIfEmpty((string)($b['purpose'] ?? ''));
+  $startDate = trim((string)($b['startDate'] ?? ''));
+  if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $startDate)) { fail('A valid start date is required'); }
+  $endDateRaw = trim((string)($b['endDate'] ?? ''));
+  $endDate = preg_match('/^\d{4}-\d{2}-\d{2}$/', $endDateRaw) ? $endDateRaw : null;
+  $estimatedMiles = (isset($b['estimatedMiles']) && $b['estimatedMiles'] !== '') ? (float)$b['estimatedMiles'] : null;
+  $actualMiles = (isset($b['actualMiles']) && $b['actualMiles'] !== '') ? (float)$b['actualMiles'] : null;
+  $estimatedCost = (isset($b['estimatedCost']) && $b['estimatedCost'] !== '') ? (float)$b['estimatedCost'] : null;
+  $notes = nullIfEmpty((string)($b['notes'] ?? ''));
+  return [$name, $purpose, $startDate, $endDate, $estimatedMiles, $actualMiles, $estimatedCost, $notes];
+}
+
+function addTrip(int $userId, array $b): int {
+  [$name, $purpose, $startDate, $endDate, $estimatedMiles, $actualMiles, $estimatedCost, $notes] = tripFields($b);
+  $pairs = [
+    ['i', $userId], ['s', $name], ['s', $purpose], ['s', $startDate], ['s', $endDate],
+    ['d', $estimatedMiles], ['d', $actualMiles], ['d', $estimatedCost], ['s', $notes],
+  ];
+  $stmt = db()->prepare(
+    'INSERT INTO lt_trips (user_id, name, purpose, start_date, end_date, estimated_miles, actual_miles, estimated_cost, notes)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  );
+  $stmt->bind_param(implode('', array_column($pairs, 0)), ...array_column($pairs, 1));
+  $stmt->execute();
+  $id = $stmt->insert_id;
+  $stmt->close();
+  return $id;
+}
+
+function updateTrip(int $userId, int $id, array $b): void {
+  [$name, $purpose, $startDate, $endDate, $estimatedMiles, $actualMiles, $estimatedCost, $notes] = tripFields($b);
+  $pairs = [
+    ['s', $name], ['s', $purpose], ['s', $startDate], ['s', $endDate], ['d', $estimatedMiles],
+    ['d', $actualMiles], ['d', $estimatedCost], ['s', $notes], ['i', $id], ['i', $userId],
+  ];
+  $stmt = db()->prepare(
+    'UPDATE lt_trips SET name = ?, purpose = ?, start_date = ?, end_date = ?, estimated_miles = ?,
+     actual_miles = ?, estimated_cost = ?, notes = ? WHERE id = ? AND user_id = ?'
+  );
+  $stmt->bind_param(implode('', array_column($pairs, 0)), ...array_column($pairs, 1));
+  $stmt->execute();
+  $stmt->close();
+}
+
+function setTripStatus(int $userId, int $id, string $status): void {
+  $status = normEnum($status, TRIP_STATUSES, 'Planned');
+  $stmt = db()->prepare('UPDATE lt_trips SET status = ? WHERE id = ? AND user_id = ?');
+  $stmt->bind_param('sii', $status, $id, $userId);
+  $stmt->execute();
+  $stmt->close();
+}
+
+function deleteTrip(int $userId, int $id): void {
+  $stmt = db()->prepare('DELETE FROM lt_trips WHERE id = ? AND user_id = ?');
+  $stmt->bind_param('ii', $id, $userId);
+  $stmt->execute();
+  $stmt->close();
+}
+
+// Every trip-detail (stops/expenses) action re-validates the trip belongs
+// to $userId before touching it -- tenant safety for a child table that
+// doesn't itself carry user_id for stops (spec section 94).
+function ownedTripId(int $userId, int $tripId): int {
+  $id = ownedId('lt_trips', $tripId, $userId);
+  if ($id === null) { fail('Trip not found'); }
+  return $id;
+}
+
+function listTripStops(int $userId, int $tripId): array {
+  ownedTripId($userId, $tripId);
+  $stmt = db()->prepare(
+    'SELECT ts.id, ts.stop_sequence, ts.location_id, l.name AS location_name, l.address AS location_address,
+            ts.planned_date, ts.notes
+     FROM lt_trip_stops ts LEFT JOIN lt_locations l ON l.id = ts.location_id
+     WHERE ts.trip_id = ? ORDER BY ts.stop_sequence, ts.id'
+  );
+  $stmt->bind_param('i', $tripId);
+  $stmt->execute();
+  $res = $stmt->get_result();
+  $out = [];
+  while ($r = $res->fetch_assoc()) {
+    $out[] = [
+      'Id' => (int)$r['id'],
+      'StopSequence' => (int)$r['stop_sequence'],
+      'LocationId' => $r['location_id'] !== null ? (int)$r['location_id'] : null,
+      'LocationName' => (string)($r['location_name'] ?? ''),
+      'LocationAddress' => (string)($r['location_address'] ?? ''),
+      'PlannedDate' => $r['planned_date'],
+      'Notes' => (string)($r['notes'] ?? ''),
+    ];
+  }
+  $stmt->close();
+  return $out;
+}
+
+function addTripStop(int $userId, int $tripId, array $b): int {
+  ownedTripId($userId, $tripId);
+  $locationId = ownedId('lt_locations', isset($b['locationId']) && $b['locationId'] !== '' ? (int)$b['locationId'] : null, $userId);
+  $plannedDate = preg_match('/^\d{4}-\d{2}-\d{2}$/', (string)($b['plannedDate'] ?? '')) ? $b['plannedDate'] : null;
+  $notes = nullIfEmpty((string)($b['notes'] ?? ''));
+  $sequence = (int)($b['stopSequence'] ?? 0);
+  $stmt = db()->prepare(
+    'INSERT INTO lt_trip_stops (trip_id, stop_sequence, location_id, planned_date, notes) VALUES (?, ?, ?, ?, ?)'
+  );
+  $stmt->bind_param('iiiss', $tripId, $sequence, $locationId, $plannedDate, $notes);
+  $stmt->execute();
+  $id = $stmt->insert_id;
+  $stmt->close();
+  return $id;
+}
+
+function deleteTripStop(int $userId, int $tripId, int $stopId): void {
+  ownedTripId($userId, $tripId);
+  $stmt = db()->prepare('DELETE FROM lt_trip_stops WHERE id = ? AND trip_id = ?');
+  $stmt->bind_param('ii', $stopId, $tripId);
+  $stmt->execute();
+  $stmt->close();
+}
+
+function listTripExpenses(int $userId, int $tripId): array {
+  ownedTripId($userId, $tripId);
+  $stmt = db()->prepare('SELECT id, expense_date, expense_type, amount, description FROM lt_trip_expenses WHERE trip_id = ? ORDER BY expense_date, id');
+  $stmt->bind_param('i', $tripId);
+  $stmt->execute();
+  $res = $stmt->get_result();
+  $out = [];
+  while ($r = $res->fetch_assoc()) {
+    $out[] = [
+      'Id' => (int)$r['id'],
+      'ExpenseDate' => (string)$r['expense_date'],
+      'ExpenseType' => (string)$r['expense_type'],
+      'Amount' => (float)$r['amount'],
+      'Description' => (string)($r['description'] ?? ''),
+    ];
+  }
+  $stmt->close();
+  return $out;
+}
+
+function addTripExpense(int $userId, int $tripId, array $b): int {
+  ownedTripId($userId, $tripId);
+  $expenseDate = trim((string)($b['expenseDate'] ?? ''));
+  if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $expenseDate)) { fail('A valid expense date is required'); }
+  $expenseType = normEnum((string)($b['expenseType'] ?? ''), EXPENSE_TYPES, 'Other');
+  $amount = (isset($b['amount']) && $b['amount'] !== '') ? (float)$b['amount'] : 0.0;
+  if ($amount <= 0) { fail('Amount must be greater than zero'); }
+  $description = nullIfEmpty((string)($b['description'] ?? ''));
+  $stmt = db()->prepare(
+    'INSERT INTO lt_trip_expenses (trip_id, user_id, expense_date, expense_type, amount, description) VALUES (?, ?, ?, ?, ?, ?)'
+  );
+  $stmt->bind_param('iissds', $tripId, $userId, $expenseDate, $expenseType, $amount, $description);
+  $stmt->execute();
+  $id = $stmt->insert_id;
+  $stmt->close();
+  return $id;
+}
+
+function deleteTripExpense(int $userId, int $tripId, int $expenseId): void {
+  ownedTripId($userId, $tripId);
+  $stmt = db()->prepare('DELETE FROM lt_trip_expenses WHERE id = ? AND trip_id = ?');
+  $stmt->bind_param('ii', $expenseId, $tripId);
+  $stmt->execute();
+  $stmt->close();
+}
+
 // ---- Router ----
 
 $method = $_SERVER['REQUEST_METHOD'];
@@ -1778,6 +2076,121 @@ switch ($action) {
     $id = (int)($body['id'] ?? 0);
     if ($id <= 0) { fail('Missing event id'); }
     deletePlannedEvent((int)$user['id'], $id);
+    respond(['ok' => true]);
+  }
+
+  // -- Phase 7: Clients --
+
+  case 'clients': {
+    $user = requireMember();
+    respond(['ok' => true, 'clients' => listClients((int)$user['id'])]);
+  }
+
+  case 'addClient': {
+    $user = requireMember();
+    $id = addClient((int)$user['id'], $body);
+    respond(['ok' => true, 'id' => $id]);
+  }
+
+  case 'updateClient': {
+    $user = requireMember();
+    $id = (int)($body['id'] ?? 0);
+    if ($id <= 0) { fail('Missing client id'); }
+    updateClient((int)$user['id'], $id, $body);
+    respond(['ok' => true]);
+  }
+
+  case 'billableReport': {
+    $user = requireMember();
+    $from = trim((string)($_GET['from'] ?? ''));
+    $to = trim((string)($_GET['to'] ?? ''));
+    if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $from)) { $from = date('Y-m-d', strtotime('-30 days')); }
+    if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $to)) { $to = date('Y-m-d'); }
+    respond(['ok' => true] + billableReport((int)$user['id'], $from, $to));
+  }
+
+  // -- Phase 7: Trips --
+
+  case 'trips': {
+    $user = requireMember();
+    respond(['ok' => true, 'trips' => listTrips((int)$user['id'])]);
+  }
+
+  case 'addTrip': {
+    $user = requireMember();
+    $id = addTrip((int)$user['id'], $body);
+    respond(['ok' => true, 'id' => $id]);
+  }
+
+  case 'updateTrip': {
+    $user = requireMember();
+    $id = (int)($body['id'] ?? 0);
+    if ($id <= 0) { fail('Missing trip id'); }
+    updateTrip((int)$user['id'], $id, $body);
+    respond(['ok' => true]);
+  }
+
+  case 'setTripStatus': {
+    $user = requireMember();
+    $id = (int)($body['id'] ?? 0);
+    if ($id <= 0) { fail('Missing trip id'); }
+    setTripStatus((int)$user['id'], $id, (string)($body['status'] ?? 'Planned'));
+    respond(['ok' => true]);
+  }
+
+  case 'deleteTrip': {
+    $user = requireMember();
+    $id = (int)($body['id'] ?? 0);
+    if ($id <= 0) { fail('Missing trip id'); }
+    deleteTrip((int)$user['id'], $id);
+    respond(['ok' => true]);
+  }
+
+  case 'tripStops': {
+    $user = requireMember();
+    $tripId = (int)($_GET['tripId'] ?? 0);
+    if ($tripId <= 0) { fail('Missing trip id'); }
+    respond(['ok' => true, 'stops' => listTripStops((int)$user['id'], $tripId)]);
+  }
+
+  case 'addTripStop': {
+    $user = requireMember();
+    $tripId = (int)($body['tripId'] ?? 0);
+    if ($tripId <= 0) { fail('Missing trip id'); }
+    $id = addTripStop((int)$user['id'], $tripId, $body);
+    respond(['ok' => true, 'id' => $id]);
+  }
+
+  case 'deleteTripStop': {
+    $user = requireMember();
+    $tripId = (int)($body['tripId'] ?? 0);
+    $id = (int)($body['id'] ?? 0);
+    if ($tripId <= 0 || $id <= 0) { fail('Missing trip or stop id'); }
+    deleteTripStop((int)$user['id'], $tripId, $id);
+    respond(['ok' => true]);
+  }
+
+  case 'tripExpenses': {
+    $user = requireMember();
+    $tripId = (int)($_GET['tripId'] ?? 0);
+    if ($tripId <= 0) { fail('Missing trip id'); }
+    respond(['ok' => true, 'expenses' => listTripExpenses((int)$user['id'], $tripId)]);
+  }
+
+  case 'addTripExpense': {
+    $user = requireMember();
+    $tripId = (int)($body['tripId'] ?? 0);
+    if ($tripId <= 0) { fail('Missing trip id'); }
+    $id = addTripExpense((int)$user['id'], $tripId, $body);
+    respond(['ok' => true, 'id' => $id]);
+  }
+
+  case 'deleteTripExpense': {
+    $user = requireMember();
+    $tripId = (int)($body['tripId'] ?? 0);
+    $id = (int)($body['id'] ?? 0);
+    if ($tripId <= 0 || $id <= 0) { fail('Missing trip or expense id'); }
+    deleteTripExpense((int)$user['id'], $tripId, $id);
     respond(['ok' => true]);
   }
 

@@ -166,3 +166,23 @@ Phase 6 adds Seasons, Planned Events, and a bulk date-range Day Status.
    illness instead of setting each day individually on Today.
 6. Locations now show a **Navigate** link (Manage, and anywhere a location
    appears on Today/History/Plan) that opens Google Maps.
+
+## Phase 7 update
+
+Phase 7 adds Trips, Clients, billable reporting, and CSV export.
+
+1. In phpMyAdmin, run `api/schema.sql` again. It adds `lt_trips`,
+   `lt_trip_stops`, `lt_trip_expenses`, and `lt_clients` (all `CREATE TABLE
+   IF NOT EXISTS`, safe to re-run), plus one plain `ALTER TABLE
+   lt_activity_log ADD COLUMN client_id ...` — **not idempotent**, skip it
+   if you already ran this Phase 7 block once.
+2. Re-upload `api/api.php`.
+3. Push/pull the updated front end (`trips.html` and `reports.html` are
+   new).
+4. On **Trips**, plan a trip and add its stops/expenses as they firm up or
+   as you spend money on it.
+5. On **Manage → Clients**, add a client if you do billable work, then
+   attribute billable log entries to it on Today/History.
+6. Check **Reports** for the Billable Report (by client, by date range) and
+   CSV export for it and for Trips. **History** also got its own **Download
+   CSV** button for the currently filtered activity log.

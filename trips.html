@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Trips | Life Tempo</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="bar">
+    <h1>🧭 Life Tempo</h1>
+    <nav>
+      <a href="index.html">Today</a>
+      <a href="plan.html">Plan</a>
+      <a href="history.html">History</a>
+      <a href="trips.html" aria-current="page">Trips</a>
+      <a href="dashboard.html">Dashboard</a>
+      <a href="engagement.html">Engagement</a>
+      <a href="reports.html">Reports</a>
+      <a href="manage.html">Manage</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <div id="status"></div>
+  <div id="content"><p class="note">Loading…</p></div>
+</main>
+
+<footer class="site-footer">Life Tempo — Phase 7: Travel, Contract Work, and CSV Export</footer>
+
+<script src="js/api.js"></script>
+<script>
+const statusEl = document.getElementById('status');
+const contentEl = document.getElementById('content');
+
+let LOCATIONS = [];
+let TRIPS = [];
+let editingId = null;
+const EXPENSE_TYPES = ['Fuel', 'Lodging', 'Meals', 'Admission', 'Parking', 'Supplies', 'Other'];
+
+function showStatus(msg) {
+  if (!msg) { statusEl.style.display = 'none'; return; }
+  statusEl.textContent = msg;
+  statusEl.style.display = 'block';
+}
+
+function optionsHtml(items, valueKey, labelKey, selected) {
+  return items.map(i => `<option value="${i[valueKey]}" ${String(i[valueKey]) === String(selected) ? 'selected' : ''}>${escapeHtml(i[labelKey])}</option>`).join('');
+}
+
+function formatDateRange(start, end) {
+  if (!end || end === start) return start;
+  return `${start} – ${end}`;
+}
+
+function render() {
+  contentEl.innerHTML = `
+    <div class="card">
+      <h3 id="form-heading">Plan a Trip</h3>
+      <form id="trip-form">
+        <input type="hidden" id="f-id">
+        <label for="f-name">Name</label>
+        <input type="text" id="f-name" required placeholder="Cache Valley Temple Trip">
+
+        <label for="f-purpose">Purpose</label>
+        <input type="text" id="f-purpose" placeholder="Temple travel">
+
+        <div class="form-grid">
+          <div>
+            <label for="f-start">Start date</label>
+            <input type="date" id="f-start" value="${todayStr()}">
+          </div>
+          <div>
+            <label for="f-end">End date (optional)</label>
+            <input type="date" id="f-end">
+          </div>
+        </div>
+
+        <div class="form-grid">
+          <div>
+            <label for="f-est-miles">Estimated miles</label>
+            <input type="number" id="f-est-miles" min="0" step="0.1">
+          </div>
+          <div>
+            <label for="f-est-cost">Estimated cost</label>
+            <input type="number" id="f-est-cost" min="0" step="0.01">
+          </div>
+          <div>
+            <label for="f-act-miles">Actual miles</label>
+            <input type="number" id="f-act-miles" min="0" step="0.1">
+          </div>
+        </div>
+
+        <label for="f-notes">Notes</label>
+        <textarea id="f-notes"></textarea>
+
+        <p>
+          <button type="submit" class="btn">Save</button>
+          <button type="button" class="btn secondary" id="f-cancel" style="display:none;">Cancel edit</button>
+        </p>
+      </form>
+    </div>
+
+    <div class="card">
+      <h3>Trips</h3>
+      <div id="trip-list"></div>
+    </div>
+  `;
+
+  document.getElementById('trip-form').addEventListener('submit', onSubmit);
+  document.getElementById('f-cancel').addEventListener('click', resetForm);
+
+  renderTripList();
+}
+
+function renderTripList() {
+  const list = document.getElementById('trip-list');
+  list.innerHTML = '';
+  if (!TRIPS.length) {
+    list.innerHTML = '<p class="note">No trips yet.</p>';
+    return;
+  }
+  TRIPS.forEach(trip => list.appendChild(tripCardEl(trip)));
+}
+
+function tripCardEl(trip) {
+  const card = document.createElement('div');
+  card.className = 'card';
+  const costLine = `Est. $${(trip.EstimatedCost ?? 0).toFixed(2)} · Actual $${trip.ActualCost.toFixed(2)}`;
+  const milesLine = (trip.EstimatedMiles || trip.ActualMiles)
+    ? `Est. ${trip.EstimatedMiles ?? '—'} mi · Actual ${trip.ActualMiles ?? '—'} mi`
+    : '';
+  card.innerHTML = `
+    <div class="gc-head">
+      <span class="gc-name">${escapeHtml(trip.Name)}</span>
+      <select data-status class="btn secondary" style="width:auto;">
+        <option value="Planned" ${trip.Status === 'Planned' ? 'selected' : ''}>Planned</option>
+        <option value="Completed" ${trip.Status === 'Completed' ? 'selected' : ''}>Completed</option>
+        <option value="Cancelled" ${trip.Status === 'Cancelled' ? 'selected' : ''}>Cancelled</option>
+      </select>
+    </div>
+    <div class="gc-meta">
+      ${escapeHtml(formatDateRange(trip.StartDate, trip.EndDate))}
+      ${trip.Purpose ? ' · ' + escapeHtml(trip.Purpose) : ''}
+    </div>
+    <div class="gc-meta">${costLine}${milesLine ? ' · ' + milesLine : ''}</div>
+    ${trip.Notes ? `<div class="lr-notes">${escapeHtml(trip.Notes)}</div>` : ''}
+    <p style="margin-top:0.6rem;">
+      <button type="button" class="btn secondary" data-toggle>Stops &amp; Expenses</button>
+      <button type="button" class="btn secondary" data-edit>Edit</button>
+      <button type="button" class="btn secondary" data-delete>Delete</button>
+    </p>
+    <div class="details" style="display:none;"></div>
+  `;
+
+  card.querySelector('[data-status]').addEventListener('change', async (ev) => {
+    try {
+      await postAction('setTripStatus', { id: trip.Id, status: ev.target.value });
+    } catch (e) {
+      showStatus("Couldn't update trip status.");
+    }
+  });
+  card.querySelector('[data-edit]').addEventListener('click', () => startEdit(trip));
+  card.querySelector('[data-delete]').addEventListener('click', () => deleteTrip(trip));
+  const toggleBtn = card.querySelector('[data-toggle]');
+  const details = card.querySelector('.details');
+  let loaded = false;
+  toggleBtn.addEventListener('click', async () => {
+    const open = details.style.display !== 'none';
+    if (open) { details.style.display = 'none'; return; }
+    details.style.display = 'block';
+    if (!loaded) {
+      loaded = true;
+      await loadTripDetails(trip, details);
+    }
+  });
+
+  return card;
+}
+
+async function loadTripDetails(trip, container) {
+  container.innerHTML = '<p class="note">Loading…</p>';
+  try {
+    const [stopsRes, expensesRes] = await Promise.all([
+      fetchData('tripStops', { tripId: trip.Id }),
+      fetchData('tripExpenses', { tripId: trip.Id }),
+    ]);
+    const stops = (stopsRes && stopsRes.stops) || [];
+    const expenses = (expensesRes && expensesRes.expenses) || [];
+    renderTripDetails(trip, container, stops, expenses);
+  } catch (e) {
+    container.innerHTML = '<p class="note">Couldn\'t load trip details.</p>';
+  }
+}
+
+function renderTripDetails(trip, container, stops, expenses) {
+  const total = expenses.reduce((sum, e) => sum + e.Amount, 0);
+  container.innerHTML = `
+    <h4 style="margin-bottom:0.3rem;">Stops</h4>
+    <div id="stops-list-${trip.Id}"></div>
+    <div class="form-grid" style="margin-top:0.5rem;">
+      <div>
+        <label>Location</label>
+        <select id="stop-location-${trip.Id}">
+          <option value="">(none)</option>
+          ${optionsHtml(LOCATIONS.filter(l => l.Active), 'Id', 'Name')}
+        </select>
+      </div>
+      <div>
+        <label>Date</label>
+        <input type="date" id="stop-date-${trip.Id}" value="${trip.StartDate}">
+      </div>
+      <div>
+        <label>Notes</label>
+        <input type="text" id="stop-notes-${trip.Id}">
+      </div>
+    </div>
+    <p><button type="button" class="btn secondary" id="stop-add-${trip.Id}">Add Stop</button></p>
+
+    <h4 style="margin-bottom:0.3rem;">Expenses (total $${total.toFixed(2)})</h4>
+    <div id="expenses-list-${trip.Id}"></div>
+    <div class="form-grid" style="margin-top:0.5rem;">
+      <div>
+        <label>Date</label>
+        <input type="date" id="exp-date-${trip.Id}" value="${trip.StartDate}">
+      </div>
+      <div>
+        <label>Type</label>
+        <select id="exp-type-${trip.Id}">${EXPENSE_TYPES.map(t => `<option value="${t}">${t}</option>`).join('')}</select>
+      </div>
+      <div>
+        <label>Amount</label>
+        <input type="number" id="exp-amount-${trip.Id}" min="0" step="0.01">
+      </div>
+      <div>
+        <label>Description</label>
+        <input type="text" id="exp-desc-${trip.Id}">
+      </div>
+    </div>
+    <p><button type="button" class="btn secondary" id="exp-add-${trip.Id}">Add Expense</button></p>
+  `;
+
+  const stopsList = container.querySelector(`#stops-list-${trip.Id}`);
+  if (!stops.length) {
+    stopsList.innerHTML = '<p class="note">No stops yet.</p>';
+  } else {
+    stops.forEach(s => {
+      const row = document.createElement('div');
+      row.className = 'log-row';
+      row.innerHTML = `
+        <div class="lr-main">
+          <div class="lr-activity">${s.LocationName ? locationLinkHtml(s.LocationName, s.LocationAddress) : '(no location)'}</div>
+          <div class="lr-meta">${escapeHtml(s.PlannedDate || '')}${s.Notes ? ' · ' + escapeHtml(s.Notes) : ''}</div>
+        </div>`;
+      const actions = document.createElement('div');
+      actions.className = 'lr-actions';
+      const delBtn = document.createElement('button');
+      delBtn.type = 'button';
+      delBtn.className = 'btn secondary';
+      delBtn.textContent = 'Delete';
+      delBtn.addEventListener('click', async () => {
+        try {
+          await postAction('deleteTripStop', { tripId: trip.Id, id: s.Id });
+          await loadTripDetails(trip, container);
+        } catch (e) { showStatus("Couldn't delete that stop."); }
+      });
+      actions.appendChild(delBtn);
+      row.appendChild(actions);
+      stopsList.appendChild(row);
+    });
+  }
+
+  const expList = container.querySelector(`#expenses-list-${trip.Id}`);
+  if (!expenses.length) {
+    expList.innerHTML = '<p class="note">No expenses yet.</p>';
+  } else {
+    expenses.forEach(e => {
+      const row = document.createElement('div');
+      row.className = 'log-row';
+      row.innerHTML = `
+        <div class="lr-main">
+          <div class="lr-activity">${escapeHtml(e.ExpenseType)} — ${formatMoney(e.Amount)}</div>
+          <div class="lr-meta">${escapeHtml(e.ExpenseDate)}${e.Description ? ' · ' + escapeHtml(e.Description) : ''}</div>
+        </div>`;
+      const actions = document.createElement('div');
+      actions.className = 'lr-actions';
+      const delBtn = document.createElement('button');
+      delBtn.type = 'button';
+      delBtn.className = 'btn secondary';
+      delBtn.textContent = 'Delete';
+      delBtn.addEventListener('click', async () => {
+        try {
+          await postAction('deleteTripExpense', { tripId: trip.Id, id: e.Id });
+          await loadTripDetails(trip, container);
+          await load();
+        } catch (err) { showStatus("Couldn't delete that expense."); }
+      });
+      actions.appendChild(delBtn);
+      row.appendChild(actions);
+      expList.appendChild(row);
+    });
+  }
+
+  container.querySelector(`#stop-add-${trip.Id}`).addEventListener('click', async () => {
+    const locationId = document.getElementById(`stop-location-${trip.Id}`).value;
+    const plannedDate = document.getElementById(`stop-date-${trip.Id}`).value;
+    const notes = document.getElementById(`stop-notes-${trip.Id}`).value;
+    try {
+      await postAction('addTripStop', { tripId: trip.Id, locationId, plannedDate, notes, stopSequence: stops.length });
+      await loadTripDetails(trip, container);
+    } catch (e) { showStatus("Couldn't add that stop."); }
+  });
+
+  container.querySelector(`#exp-add-${trip.Id}`).addEventListener('click', async () => {
+    const expenseDate = document.getElementById(`exp-date-${trip.Id}`).value;
+    const expenseType = document.getElementById(`exp-type-${trip.Id}`).value;
+    const amount = document.getElementById(`exp-amount-${trip.Id}`).value;
+    const description = document.getElementById(`exp-desc-${trip.Id}`).value;
+    if (!amount || Number(amount) <= 0) { showStatus('Enter an amount greater than zero.'); return; }
+    try {
+      await postAction('addTripExpense', { tripId: trip.Id, expenseDate, expenseType, amount, description });
+      await loadTripDetails(trip, container);
+      await load();
+    } catch (e) { showStatus("Couldn't add that expense."); }
+  });
+}
+
+function startEdit(trip) {
+  editingId = trip.Id;
+  document.getElementById('form-heading').textContent = 'Edit Trip';
+  document.getElementById('f-id').value = trip.Id;
+  document.getElementById('f-name').value = trip.Name;
+  document.getElementById('f-purpose').value = trip.Purpose || '';
+  document.getElementById('f-start').value = trip.StartDate;
+  document.getElementById('f-end').value = trip.EndDate || '';
+  document.getElementById('f-est-miles').value = trip.EstimatedMiles ?? '';
+  document.getElementById('f-act-miles').value = trip.ActualMiles ?? '';
+  document.getElementById('f-est-cost').value = trip.EstimatedCost ?? '';
+  document.getElementById('f-notes').value = trip.Notes || '';
+  document.getElementById('f-cancel').style.display = 'inline-block';
+  document.getElementById('form-heading').scrollIntoView({ behavior: 'smooth' });
+}
+
+function resetForm() {
+  editingId = null;
+  document.getElementById('form-heading').textContent = 'Plan a Trip';
+  document.getElementById('trip-form').reset();
+  document.getElementById('f-id').value = '';
+  document.getElementById('f-start').value = todayStr();
+  document.getElementById('f-cancel').style.display = 'none';
+}
+
+async function deleteTrip(trip) {
+  if (!confirm(`Delete "${trip.Name}" and all its stops/expenses? This cannot be undone.`)) return;
+  try {
+    await postAction('deleteTrip', { id: trip.Id });
+    await load();
+  } catch (e) {
+    showStatus("Couldn't delete that trip.");
+  }
+}
+
+async function onSubmit(ev) {
+  ev.preventDefault();
+  const name = document.getElementById('f-name').value.trim();
+  if (!name) { showStatus('Trip name is required.'); return; }
+  const payload = {
+    name,
+    purpose: document.getElementById('f-purpose').value,
+    startDate: document.getElementById('f-start').value,
+    endDate: document.getElementById('f-end').value,
+    estimatedMiles: document.getElementById('f-est-miles').value,
+    actualMiles: document.getElementById('f-act-miles').value,
+    estimatedCost: document.getElementById('f-est-cost').value,
+    notes: document.getElementById('f-notes').value,
+  };
+  const btn = ev.target.querySelector('button[type="submit"]');
+  btn.disabled = true;
+  showStatus('');
+  try {
+    if (editingId) {
+      await postAction('updateTrip', { id: editingId, ...payload });
+      showStatus('Trip updated.');
+    } else {
+      await postAction('addTrip', payload);
+      showStatus('Trip added.');
+    }
+    resetForm();
+    await load();
+  } catch (e) {
+    showStatus("Couldn't save that trip — check the dates.");
+  }
+  btn.disabled = false;
+}
+
+async function load() {
+  try {
+    const [locRes, tripRes] = await Promise.all([fetchData('locations'), fetchData('trips')]);
+    LOCATIONS = (locRes && locRes.locations) || [];
+    TRIPS = (tripRes && tripRes.trips) || [];
+    render();
+  } catch (e) {
+    handleError(contentEl, e);
+  }
+}
+
+(async () => {
+  await captureSso();
+  await load();
+})();
+</script>
+
+</body>
+</html>

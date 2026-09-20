@@ -15,8 +15,10 @@
       <a href="index.html">Today</a>
       <a href="plan.html">Plan</a>
       <a href="history.html" aria-current="page">History</a>
+      <a href="trips.html">Trips</a>
       <a href="dashboard.html">Dashboard</a>
       <a href="engagement.html">Engagement</a>
+      <a href="reports.html">Reports</a>
       <a href="manage.html">Manage</a>
     </nav>
   </div>
@@ -27,7 +29,7 @@
   <div id="content"><p class="note">Loading…</p></div>
 </main>
 
-<footer class="site-footer">Life Tempo — Phase 6: Planning, Seasons, and Calendar-Friendly Behavior</footer>
+<footer class="site-footer">Life Tempo — Phase 7: Travel, Contract Work, and CSV Export</footer>
 
 <script src="js/api.js"></script>
 <script>
@@ -39,6 +41,8 @@ let LOCATIONS = [];
 let PEOPLE = [];
 let TAGS = [];
 let LEARNING_PROJECTS = [];
+let CLIENTS = [];
+let CURRENT_ENTRIES = [];
 let editingId = null;
 
 function showStatus(msg) {
@@ -78,7 +82,10 @@ function renderShell() {
           <input type="date" id="flt-to" value="${todayStr()}">
         </div>
       </div>
-      <p><button type="button" class="btn" id="flt-apply">Apply</button></p>
+      <p>
+        <button type="button" class="btn" id="flt-apply">Apply</button>
+        <button type="button" class="btn secondary" id="flt-export">Download CSV</button>
+      </p>
     </div>
 
     <div class="card" id="edit-card" style="display:none;">
@@ -146,6 +153,13 @@ function renderShell() {
               <option value="Apply">Apply</option>
             </select>
           </div>
+          <div>
+            <label for="f-client">Client (if billable)</label>
+            <select id="f-client">
+              <option value="">(none)</option>
+              ${optionsHtml(CLIENTS.filter(c => c.Active), 'Id', 'Name')}
+            </select>
+          </div>
         </div>
 
         <label for="f-notes">Notes</label>
@@ -177,8 +191,30 @@ function renderShell() {
   `;
 
   document.getElementById('flt-apply').addEventListener('click', loadEntries);
+  document.getElementById('flt-export').addEventListener('click', exportCsv);
   document.getElementById('log-form').addEventListener('submit', onSubmit);
   document.getElementById('f-cancel').addEventListener('click', closeEdit);
+}
+
+function exportCsv() {
+  if (!CURRENT_ENTRIES.length) { showStatus('Nothing to export in this range.'); return; }
+  const columns = [
+    { label: 'Date', value: 'ActivityDate' },
+    { label: 'Activity', value: 'ActivityName' },
+    { label: 'Start', value: e => timeOnly(e.StartTime) },
+    { label: 'End', value: e => timeOnly(e.EndTime) },
+    { label: 'Minutes', value: 'DurationMinutes' },
+    { label: 'Location', value: 'LocationName' },
+    { label: 'Productive', value: e => e.Productive ? 'Yes' : 'No' },
+    { label: 'Billable', value: e => e.Billable ? 'Yes' : 'No' },
+    { label: 'Client', value: 'ClientName' },
+    { label: 'Cost', value: 'CostAmount' },
+    { label: 'Shared Life', value: e => e.SharedLife ? 'Yes' : 'No' },
+    { label: 'With', value: e => (e.PersonNames || []).join('; ') },
+    { label: 'Tags', value: e => (e.TagNames || []).join('; ') },
+    { label: 'Notes', value: 'Notes' },
+  ];
+  downloadCsv(`life-tempo-activity-log.csv`, columns, CURRENT_ENTRIES);
 }
 
 function renderList(entries) {
@@ -213,6 +249,7 @@ function startEdit(entry) {
   document.getElementById('f-shared-life').checked = !!entry.SharedLife;
   document.getElementById('f-learning-project').value = entry.LearningProjectId ?? '';
   document.getElementById('f-learning-mode').value = entry.LearningMode || 'Learn';
+  document.getElementById('f-client').value = entry.ClientId ?? '';
   setMultiSelectValues('f-people', entry.PersonIds || []);
   setMultiSelectValues('f-tags', entry.TagIds || []);
   document.getElementById('edit-card').scrollIntoView({ behavior: 'smooth' });
@@ -258,6 +295,7 @@ async function onSubmit(ev) {
     sharedLife: document.getElementById('f-shared-life').checked,
     learningProjectId: document.getElementById('f-learning-project').value,
     learningMode: document.getElementById('f-learning-mode').value,
+    clientId: document.getElementById('f-client').value,
     personIds: selectedValues(document.getElementById('f-people')),
     tagIds: selectedValues(document.getElementById('f-tags')),
   };
@@ -282,20 +320,22 @@ async function loadEntries() {
   const params = { from, to };
   if (activityId) params.activityId = activityId;
   const res = await fetchData('activityLog', params);
-  renderList((res && res.entries) || []);
+  CURRENT_ENTRIES = (res && res.entries) || [];
+  renderList(CURRENT_ENTRIES);
 }
 
 async function load() {
   try {
-    const [actRes, locRes, personRes, tagRes, lpRes] = await Promise.all([
+    const [actRes, locRes, personRes, tagRes, lpRes, clientRes] = await Promise.all([
       fetchData('activities'), fetchData('locations'),
-      fetchData('people'), fetchData('tags'), fetchData('learningProjects'),
+      fetchData('people'), fetchData('tags'), fetchData('learningProjects'), fetchData('clients'),
     ]);
     ACTIVITIES = (actRes && actRes.activities) || [];
     LOCATIONS = (locRes && locRes.locations) || [];
     PEOPLE = (personRes && personRes.people) || [];
     TAGS = (tagRes && tagRes.tags) || [];
     LEARNING_PROJECTS = (lpRes && lpRes.learningProjects) || [];
+    CLIENTS = (clientRes && clientRes.clients) || [];
     renderShell();
     await loadEntries();
   } catch (e) {

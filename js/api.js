@@ -290,6 +290,33 @@ function selectedValues(selectEl) {
   return Array.from(selectEl.selectedOptions).map(o => o.value);
 }
 
+// ---- Phase 7 shared helper (CSV export) ----
+// Client-side only -- every export is built from data a GET action already
+// returns, so there's no server-side export endpoint to maintain.
+
+function toCsv(columns, rows) {
+  const esc = v => {
+    const s = v === null || v === undefined ? '' : String(v);
+    return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  };
+  const header = columns.map(c => esc(c.label)).join(',');
+  const body = rows.map(row => columns.map(c => esc(typeof c.value === 'function' ? c.value(row) : row[c.value])).join(',')).join('\n');
+  return header + '\n' + body;
+}
+
+function downloadCsv(filename, columns, rows) {
+  const csv = toCsv(columns, rows);
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 // ---- Phase 3 shared helpers (Dashboard / Today's day-status) ----
 
 function goalStatusClass(status) {

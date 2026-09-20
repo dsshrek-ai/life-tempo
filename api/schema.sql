@@ -327,6 +327,83 @@ ALTER TABLE lt_activity_log
   ADD KEY ix_lt_activity_log_planned_event (planned_event_id),
   ADD FOREIGN KEY (planned_event_id) REFERENCES lt_planned_events(id) ON DELETE SET NULL;
 
+-- ---------- PHASE 7: Travel, Contract Work, and CSV Export ----------
+-- Only what was actually asked for (spec section 147.1): Trip/TripStop/
+-- TripExpense for travel, and Client for billable-work grouping.
+-- WorkProject/Invoice/InvoiceLine are skipped -- spec section 82 already
+-- flags those as fine to wait, and a Client plus the existing Billable
+-- flag/cost_amount on ActivityLog is enough for reporting. CSV export
+-- needs no schema at all -- it's built client-side from data the API
+-- already returns. Full calendar sync, a shared partner account, and
+-- notifications were explicitly declined for now.
+
+CREATE TABLE IF NOT EXISTS lt_trips (
+  id               INT AUTO_INCREMENT PRIMARY KEY,
+  user_id          INT NOT NULL,
+  name             VARCHAR(200) NOT NULL,
+  purpose          VARCHAR(200) NULL,
+  start_date       DATE NOT NULL,
+  end_date         DATE NULL,
+  estimated_miles  DECIMAL(10,1) NULL,
+  actual_miles     DECIMAL(10,1) NULL,
+  estimated_cost   DECIMAL(12,2) NULL,
+  status           VARCHAR(20) NOT NULL DEFAULT 'Planned', -- Planned | Completed | Cancelled
+  notes            VARCHAR(1000) NULL,
+  created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  KEY ix_lt_trips_user (user_id, status, start_date),
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- No actual_cost column -- it's always computed as SUM(lt_trip_expenses)
+-- rather than a second, potentially-conflicting place to enter the same
+-- number (spec section 21's "avoid duplicate data entry" principle).
+CREATE TABLE IF NOT EXISTS lt_trip_stops (
+  id            INT AUTO_INCREMENT PRIMARY KEY,
+  trip_id       INT NOT NULL,
+  stop_sequence INT NOT NULL DEFAULT 0,
+  location_id   INT NULL,
+  planned_date  DATE NULL,
+  notes         VARCHAR(500) NULL,
+  KEY ix_lt_trip_stops_trip (trip_id, stop_sequence),
+  FOREIGN KEY (trip_id) REFERENCES lt_trips(id) ON DELETE CASCADE,
+  FOREIGN KEY (location_id) REFERENCES lt_locations(id) ON DELETE SET NULL
+) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS lt_trip_expenses (
+  id            INT AUTO_INCREMENT PRIMARY KEY,
+  trip_id       INT NOT NULL,
+  user_id       INT NOT NULL,
+  expense_date  DATE NOT NULL,
+  expense_type  VARCHAR(30) NOT NULL, -- Fuel | Lodging | Meals | Admission | Parking | Supplies | Other
+  amount        DECIMAL(12,2) NOT NULL,
+  description   VARCHAR(300) NULL,
+  created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  KEY ix_lt_trip_expenses_trip (trip_id),
+  FOREIGN KEY (trip_id) REFERENCES lt_trips(id) ON DELETE CASCADE,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS lt_clients (
+  id          INT AUTO_INCREMENT PRIMARY KEY,
+  user_id     INT NOT NULL,
+  name        VARCHAR(150) NOT NULL,
+  notes       VARCHAR(500) NULL,
+  active      TINYINT(1) NOT NULL DEFAULT 1,
+  created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_lt_clients_user_name (user_id, name),
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Which client a billable log entry should be attributed to for reporting
+-- (the entry's existing billable flag + cost_amount/duration already carry
+-- the rest). Run once.
+ALTER TABLE lt_activity_log
+  ADD COLUMN client_id INT NULL AFTER planned_event_id,
+  ADD KEY ix_lt_activity_log_client (user_id, client_id, activity_date),
+  ADD FOREIGN KEY (client_id) REFERENCES lt_clients(id) ON DELETE SET NULL;
+
 -- ============================================================
 -- BOOTSTRAP (run once, after you've signed up through My Apps Hub):
 --
@@ -356,4 +433,8 @@ ALTER TABLE lt_activity_log
 --    01-01 to 09-30) and link it to a goal so that goal only counts while
 --    in season. On Plan, add an upcoming event, mark it complete when it
 --    happens, or mark a whole date range (a trip) as an exception day type.
+--
+-- 8) On Trips, plan a trip with stops and expenses. On Manage's Clients
+--    section, add a client, then attribute billable log entries to it and
+--    check Reports for billable hours/amount and CSV export.
 -- ============================================================

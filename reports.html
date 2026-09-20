@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Reports | Life Tempo</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="bar">
+    <h1>🧭 Life Tempo</h1>
+    <nav>
+      <a href="index.html">Today</a>
+      <a href="plan.html">Plan</a>
+      <a href="history.html">History</a>
+      <a href="trips.html">Trips</a>
+      <a href="dashboard.html">Dashboard</a>
+      <a href="engagement.html">Engagement</a>
+      <a href="reports.html" aria-current="page">Reports</a>
+      <a href="manage.html">Manage</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <div id="status"></div>
+  <div id="content"><p class="note">Loading…</p></div>
+</main>
+
+<footer class="site-footer">Life Tempo — Phase 7: Travel, Contract Work, and CSV Export</footer>
+
+<script src="js/api.js"></script>
+<script>
+const statusEl = document.getElementById('status');
+const contentEl = document.getElementById('content');
+
+let LAST_REPORT = null;
+let LAST_TRIPS = [];
+
+function showStatus(msg) {
+  if (!msg) { statusEl.style.display = 'none'; return; }
+  statusEl.textContent = msg;
+  statusEl.style.display = 'block';
+}
+
+function defaultFrom() {
+  const d = new Date();
+  d.setDate(d.getDate() - 30);
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+function render() {
+  contentEl.innerHTML = `
+    <div class="card">
+      <h3>Billable Report</h3>
+      <p class="note">Hours and amount from entries marked Billable, grouped by Client (set on Today/History).</p>
+      <div class="form-grid">
+        <div>
+          <label for="r-from">From</label>
+          <input type="date" id="r-from" value="${defaultFrom()}">
+        </div>
+        <div>
+          <label for="r-to">To</label>
+          <input type="date" id="r-to" value="${todayStr()}">
+        </div>
+      </div>
+      <p>
+        <button type="button" class="btn" id="r-run">Run</button>
+        <button type="button" class="btn secondary" id="r-export" style="display:none;">Download CSV</button>
+      </p>
+      <div id="report-result"></div>
+    </div>
+
+    <div class="card">
+      <h3>Trips Export</h3>
+      <p class="note">Every trip you've planned or taken, with estimated/actual miles and cost.</p>
+      <p><button type="button" class="btn secondary" id="trips-export">Download Trips CSV</button></p>
+    </div>
+
+    <div class="card">
+      <p class="note">Looking for a full activity log export? That's on <a href="history.html">History</a> — filter the date range there, then Download CSV.</p>
+    </div>
+  `;
+
+  document.getElementById('r-run').addEventListener('click', runReport);
+  document.getElementById('r-export').addEventListener('click', exportReport);
+  document.getElementById('trips-export').addEventListener('click', exportTrips);
+}
+
+function renderReport(report) {
+  const box = document.getElementById('report-result');
+  if (!report.Rows.length) {
+    box.innerHTML = '<p class="note">No billable entries in this range.</p>';
+    document.getElementById('r-export').style.display = 'none';
+    return;
+  }
+  const rows = report.Rows.map(r => `
+    <tr>
+      <td>${escapeHtml(r.ClientName)}</td>
+      <td>${r.EntryCount}</td>
+      <td>${formatDuration(r.TotalMinutes)}</td>
+      <td>${formatMoney(r.TotalAmount)}</td>
+    </tr>`).join('');
+  box.innerHTML = `
+    <table class="breakdown-table">
+      <thead><tr><th>Client</th><th>Entries</th><th>Hours</th><th>Amount</th></tr></thead>
+      <tbody>${rows}</tbody>
+      <tfoot><tr><th>Total</th><th></th><th>${formatDuration(report.TotalMinutes)}</th><th>${formatMoney(report.TotalAmount)}</th></tr></tfoot>
+    </table>`;
+  document.getElementById('r-export').style.display = 'inline-block';
+}
+
+async function runReport() {
+  const from = document.getElementById('r-from').value;
+  const to = document.getElementById('r-to').value;
+  showStatus('');
+  try {
+    const res = await fetchData('billableReport', { from, to });
+    LAST_REPORT = res;
+    renderReport(res);
+  } catch (e) {
+    showStatus("Couldn't run that report.");
+  }
+}
+
+function exportReport() {
+  if (!LAST_REPORT || !LAST_REPORT.Rows.length) return;
+  const columns = [
+    { label: 'Client', value: 'ClientName' },
+    { label: 'Entries', value: 'EntryCount' },
+    { label: 'Total Minutes', value: 'TotalMinutes' },
+    { label: 'Total Amount', value: 'TotalAmount' },
+  ];
+  downloadCsv('life-tempo-billable-report.csv', columns, LAST_REPORT.Rows);
+}
+
+async function exportTrips() {
+  showStatus('');
+  try {
+    const res = await fetchData('trips');
+    const trips = (res && res.trips) || [];
+    if (!trips.length) { showStatus('No trips to export.'); return; }
+    const columns = [
+      { label: 'Name', value: 'Name' },
+      { label: 'Purpose', value: 'Purpose' },
+      { label: 'Start Date', value: 'StartDate' },
+      { label: 'End Date', value: 'EndDate' },
+      { label: 'Estimated Miles', value: 'EstimatedMiles' },
+      { label: 'Actual Miles', value: 'ActualMiles' },
+      { label: 'Estimated Cost', value: 'EstimatedCost' },
+      { label: 'Actual Cost', value: 'ActualCost' },
+      { label: 'Status', value: 'Status' },
+      { label: 'Notes', value: 'Notes' },
+    ];
+    downloadCsv('life-tempo-trips.csv', columns, trips);
+  } catch (e) {
+    showStatus("Couldn't export trips.");
+  }
+}
+
+(async () => {
+  await captureSso();
+  try {
+    await fetchData('ping');
+    render();
+  } catch (e) {
+    handleError(contentEl, e);
+  }
+})();
+</script>
+
+</body>
+</html>

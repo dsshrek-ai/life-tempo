@@ -15,8 +15,10 @@
       <a href="index.html" aria-current="page">Today</a>
       <a href="plan.html">Plan</a>
       <a href="history.html">History</a>
+      <a href="trips.html">Trips</a>
       <a href="dashboard.html">Dashboard</a>
       <a href="engagement.html">Engagement</a>
+      <a href="reports.html">Reports</a>
       <a href="manage.html">Manage</a>
     </nav>
   </div>
@@ -27,7 +29,7 @@
   <div id="content"><p class="note">Loading…</p></div>
 </main>
 
-<footer class="site-footer">Life Tempo — Phase 6: Planning, Seasons, and Calendar-Friendly Behavior</footer>
+<footer class="site-footer">Life Tempo — Phase 7: Travel, Contract Work, and CSV Export</footer>
 
 <script src="js/api.js"></script>
 <script>
@@ -39,6 +41,7 @@ let LOCATIONS = [];
 let PEOPLE = [];
 let TAGS = [];
 let LEARNING_PROJECTS = [];
+let CLIENTS = [];
 let UPCOMING = [];
 let editingId = null;
 let DAY_STATUS = { DayType: 'Home' };
@@ -172,6 +175,13 @@ function renderShell(todayEntries) {
               <option value="Apply">Apply</option>
             </select>
           </div>
+          <div>
+            <label for="f-client">Client (if billable)</label>
+            <select id="f-client">
+              <option value="">(none)</option>
+              ${optionsHtml(CLIENTS.filter(c => c.Active), 'Id', 'Name')}
+            </select>
+          </div>
         </div>
 
         <label for="f-notes">Notes</label>
@@ -253,6 +263,7 @@ function startEdit(entry) {
   document.getElementById('f-shared-life').checked = !!entry.SharedLife;
   document.getElementById('f-learning-project').value = entry.LearningProjectId ?? '';
   document.getElementById('f-learning-mode').value = entry.LearningMode || 'Learn';
+  document.getElementById('f-client').value = entry.ClientId ?? '';
   setMultiSelectValues('f-people', entry.PersonIds || []);
   setMultiSelectValues('f-tags', entry.TagIds || []);
   document.getElementById('f-cancel').style.display = 'inline-block';
@@ -301,6 +312,7 @@ async function onSubmit(ev) {
     sharedLife: document.getElementById('f-shared-life').checked,
     learningProjectId: document.getElementById('f-learning-project').value,
     learningMode: document.getElementById('f-learning-mode').value,
+    clientId: document.getElementById('f-client').value,
     personIds: selectedValues(document.getElementById('f-people')),
     tagIds: selectedValues(document.getElementById('f-tags')),
   };
@@ -359,10 +371,10 @@ async function loadToday() {
 
 async function load() {
   try {
-    const [actRes, locRes, dayRes, personRes, tagRes, lpRes, evRes] = await Promise.all([
+    const [actRes, locRes, dayRes, personRes, tagRes, lpRes, evRes, clientRes] = await Promise.all([
       fetchData('activities'), fetchData('locations'), fetchData('dayStatus'),
       fetchData('people'), fetchData('tags'), fetchData('learningProjects'),
-      fetchData('plannedEvents', { status: 'Planned' }),
+      fetchData('plannedEvents', { status: 'Planned' }), fetchData('clients'),
     ]);
     ACTIVITIES = (actRes && actRes.activities) || [];
     LOCATIONS = (locRes && locRes.locations) || [];
@@ -370,6 +382,7 @@ async function load() {
     PEOPLE = (personRes && personRes.people) || [];
     TAGS = (tagRes && tagRes.tags) || [];
     LEARNING_PROJECTS = (lpRes && lpRes.learningProjects) || [];
+    CLIENTS = (clientRes && clientRes.clients) || [];
     UPCOMING = ((evRes && evRes.events) || []).filter(e => e.StartDateTime >= nowDateTimeStr());
     await loadToday();
   } catch (e) {

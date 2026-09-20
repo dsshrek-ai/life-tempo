@@ -15,8 +15,10 @@
       <a href="index.html">Today</a>
       <a href="plan.html">Plan</a>
       <a href="history.html">History</a>
+      <a href="trips.html">Trips</a>
       <a href="dashboard.html">Dashboard</a>
       <a href="engagement.html">Engagement</a>
+      <a href="reports.html">Reports</a>
       <a href="manage.html" aria-current="page">Manage</a>
     </nav>
   </div>
@@ -27,7 +29,7 @@
   <div id="content"><p class="note">Loading…</p></div>
 </main>
 
-<footer class="site-footer">Life Tempo — Phase 6: Planning, Seasons, and Calendar-Friendly Behavior</footer>
+<footer class="site-footer">Life Tempo — Phase 7: Travel, Contract Work, and CSV Export</footer>
 
 <script src="js/api.js"></script>
 <script>
@@ -42,6 +44,7 @@ let PEOPLE = [];
 let TAGS = [];
 let LEARNING_PROJECTS = [];
 let SEASONS = [];
+let CLIENTS = [];
 
 const GOAL_TYPE_OPTS = ['Minimum', 'Target', 'Maximum', 'TrackOnly'];
 const CADENCE_TYPE_OPTS = ['Daily', 'Weekly', 'Monthly'];
@@ -422,6 +425,52 @@ async function handlePersonAction(btn) {
   }
 }
 
+// ---------------- Clients ----------------
+
+function renderClients() {
+  const rows = CLIENTS.map(c => `
+    <tr data-id="${c.Id}" class="${c.Active ? '' : 'inactive-row'}">
+      <td>${txt('name', c.Name)}</td>
+      <td>${txt('notes', c.Notes)}</td>
+      <td>${chk('active', c.Active)}</td>
+      <td><button class="btn" data-act="save-client">Save</button></td>
+    </tr>`).join('');
+  const addRow = `
+    <tr id="add-client">
+      <td>${txt('name', '')}</td>
+      <td>${txt('notes', '')}</td>
+      <td>${chk('active', true)}</td>
+      <td><button class="btn" data-act="add-client">Add</button></td>
+    </tr>`;
+  return `
+    <div class="table-wrap">
+      <table class="grid">
+        <thead><tr><th>Name</th><th>Notes</th><th>Active</th><th>Actions</th></tr></thead>
+        <tbody>${rows}${addRow}</tbody>
+      </table>
+    </div>`;
+}
+
+async function handleClientAction(btn) {
+  const act = btn.dataset.act;
+  const tr = btn.closest('tr');
+  const data = readRow(tr);
+  showStatus('');
+  if (!data.name.trim()) { showStatus('Client name is required.'); return; }
+  btn.disabled = true;
+  try {
+    if (act === 'add-client') {
+      await postAction('addClient', data);
+    } else {
+      await postAction('updateClient', { id: Number(tr.dataset.id), ...data });
+    }
+    await reloadAll();
+  } catch (e) {
+    showStatus("Couldn't save that client.");
+    btn.disabled = false;
+  }
+}
+
 // ---------------- Tags ----------------
 
 function renderTags() {
@@ -556,6 +605,11 @@ function render() {
       <p class="note">Group related learning (Photography, Genealogy, ...). Attach one to a log entry along with Learn/Apply to distinguish instruction from practice.</p>
       <div id="lp-table">${renderLearningProjects()}</div>
     </div>
+    <div class="card">
+      <h3>Clients</h3>
+      <p class="note">Who billable work is for. Attribute a billable log entry to a client on Today/History, then check <a href="reports.html">Reports</a> for billable hours/amount by client.</p>
+      <div id="client-table">${renderClients()}</div>
+    </div>
   `;
   contentEl.querySelectorAll('[data-act^="save-cat"], [data-act="add-cat"]').forEach(b => b.addEventListener('click', () => handleCategoryAction(b)));
   contentEl.querySelectorAll('[data-act^="save-loc"], [data-act="add-loc"]').forEach(b => b.addEventListener('click', () => handleLocationAction(b)));
@@ -565,12 +619,14 @@ function render() {
   contentEl.querySelectorAll('[data-act^="save-person"], [data-act="add-person"]').forEach(b => b.addEventListener('click', () => handlePersonAction(b)));
   contentEl.querySelectorAll('[data-act^="save-tag"], [data-act="add-tag"]').forEach(b => b.addEventListener('click', () => handleTagAction(b)));
   contentEl.querySelectorAll('[data-act^="save-lp"], [data-act="add-lp"]').forEach(b => b.addEventListener('click', () => handleLearningProjectAction(b)));
+  contentEl.querySelectorAll('[data-act^="save-client"], [data-act="add-client"]').forEach(b => b.addEventListener('click', () => handleClientAction(b)));
 }
 
 async function reloadAll() {
-  const [catRes, locRes, actRes, goalRes, personRes, tagRes, lpRes, seasonRes] = await Promise.all([
+  const [catRes, locRes, actRes, goalRes, personRes, tagRes, lpRes, seasonRes, clientRes] = await Promise.all([
     fetchData('categories'), fetchData('locations'), fetchData('activities'), fetchData('goals'),
     fetchData('people'), fetchData('tags'), fetchData('learningProjects'), fetchData('seasons'),
+    fetchData('clients'),
   ]);
   CATEGORIES = (catRes && catRes.categories) || [];
   LOCATIONS = (locRes && locRes.locations) || [];
@@ -580,6 +636,7 @@ async function reloadAll() {
   TAGS = (tagRes && tagRes.tags) || [];
   LEARNING_PROJECTS = (lpRes && lpRes.learningProjects) || [];
   SEASONS = (seasonRes && seasonRes.seasons) || [];
+  CLIENTS = (clientRes && clientRes.clients) || [];
   render();
 }
 
