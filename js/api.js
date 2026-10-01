@@ -101,6 +101,9 @@ function renderGate(container, reason) {
 }
 
 function handleError(container, err) {
+  // Log the real cause -- the friendly message below covers both network
+  // failures and errors while drawing the page, so it alone can't tell them apart.
+  console.error(err);
   const m = err && err.message;
   if (m === 'not-authorized') renderGate(container, getToken() ? 'denied' : 'no-token');
   else if (m === 'not-configured') container.innerHTML = `<p class="note">App isn't configured yet.</p>`;
