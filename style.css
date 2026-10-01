@@ -144,6 +144,7 @@ textarea { max-width: 100%; min-height: 3.5rem; resize: vertical; }
 .goal-card:last-child { border-bottom: none; }
 .goal-card .gc-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.4rem; }
 .goal-card .gc-name { font-weight: bold; }
+.goal-card .gc-points { font-weight: bold; color: var(--accent-dark); white-space: nowrap; }
 .goal-card .gc-meta { color: var(--muted); font-size: 0.85rem; margin-top: 0.15rem; }
 .progress-track { background: var(--tint); border-radius: 999px; height: 0.6rem; margin-top: 0.5rem; overflow: hidden; }
 .progress-fill { background: var(--accent); height: 100%; border-radius: 999px; }
@@ -161,6 +162,8 @@ textarea { max-width: 100%; min-height: 3.5rem; resize: vertical; }
 .score-card.behind .score-num { color: var(--amber); }
 .score-card.over .score-num { color: #a13a3a; }
 .score-card.inactive .score-num { color: var(--muted); }
+.score-card.points .score-num { color: var(--accent-dark); }
+.score-card .score-unit { color: var(--muted); font-size: 0.85rem; }
 .score-card .score-period { color: var(--muted); font-size: 0.82rem; margin-top: 0.3rem; }
 .score-card .breakdown { margin-top: 0.7rem; text-align: left; }
 

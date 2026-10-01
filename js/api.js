@@ -343,8 +343,10 @@ function applyNavVisibility(prefs) {
 
 // ---- Phase 3 shared helpers (Dashboard / Today's day-status) ----
 
-function goalStatusClass(status) {
-  return String(status).toLowerCase().replace(/[^a-z]+/g, '-').replace(/(^-|-$)/g, '');
+// Points are weight x entries, and weights can be fractional (1.5):
+// 10 -> "10", 7.5 -> "7.5", 2.333 -> "2.33".
+function formatPoints(n) {
+  return (Math.round(Number(n || 0) * 100) / 100).toLocaleString();
 }
 
 function goalCardEl(p) {
@@ -358,7 +360,7 @@ function goalCardEl(p) {
   card.innerHTML = `
     <div class="gc-head">
       <span class="gc-name">${escapeHtml(p.Name)}</span>
-      <span class="badge ${goalStatusClass(p.Status)}">${escapeHtml(p.Status)}</span>
+      ${p.Points !== null && p.Points !== undefined ? `<span class="gc-points">${formatPoints(p.Points)} pts</span>` : ''}
     </div>
     <div class="gc-meta">
       ${cadenceLabel} · ${p.GoalType} · ${actual} of ${expected}

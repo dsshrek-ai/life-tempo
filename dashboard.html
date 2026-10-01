@@ -42,10 +42,64 @@ function showStatus(msg) {
   statusEl.style.display = 'block';
 }
 
-function render(progress, sharedLife) {
+const POINT_PERIODS = [
+  { key: 'Week', label: 'This Week' },
+  { key: 'Rolling4Weeks', label: 'Rolling 4 Weeks' },
+  { key: 'Month', label: 'This Month' },
+  { key: 'Quarter', label: 'This Quarter' },
+  { key: 'Year', label: 'This Year' },
+];
+
+function pointsBreakdownHtml(goals) {
+  const rows = goals.map(g => `<tr>
+      <td>${escapeHtml(g.Name)}${g.HasActivities ? '' : ' <em>(no activities linked)</em>'}</td>
+      <td>${g.Count}</td>
+      <td>&times;${g.Weight}</td>
+      <td><strong>${formatPoints(g.Points)}</strong></td>
+    </tr>`).join('');
+  return `
+    <table class="breakdown-table">
+      <thead><tr><th>Goal</th><th>Done</th><th>Weight</th><th>Points</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
+// Same card shape as the Engagement page's score cards, showing points
+// (weight x times done) instead of a percentage.
+function pointsCardEl(periodLabel, pts) {
+  const card = document.createElement('div');
+  card.className = 'card score-card points';
+  const scored = pts.Goals.filter(g => g.Count > 0);
+  card.innerHTML = `
+    <div class="score-num">${formatPoints(pts.Points)}</div>
+    <div class="score-unit">points</div>
+    <div class="score-period">${periodLabel}</div>
+    ${scored.length
+      ? `<p><button type="button" class="btn secondary" data-toggle style="font-size:0.8rem; padding:0.3rem 0.6rem;">Breakdown</button></p>
+         <div class="breakdown" style="display:none;">${pointsBreakdownHtml(scored)}</div>`
+      : ''}
+  `;
+  if (scored.length) {
+    const btn = card.querySelector('[data-toggle]');
+    const box = card.querySelector('.breakdown');
+    btn.addEventListener('click', () => {
+      const open = box.style.display !== 'none';
+      box.style.display = open ? 'none' : 'block';
+      btn.textContent = open ? 'Breakdown' : 'Hide';
+    });
+  }
+  return card;
+}
+
+function render(progress, sharedLife, points) {
   const weekly = progress.filter(p => p.CadenceType !== 'Monthly');
   const monthly = progress.filter(p => p.CadenceType === 'Monthly');
   contentEl.innerHTML = `
+    ${points ? `
+      <h2 style="margin-top:0;">Points</h2>
+      <div class="score-grid" id="points-grid"></div>
+      <p class="note" style="font-size:0.85rem;">Each time you log an activity linked to a goal, you earn that goal's weight in points — weight 5, done twice, is 10 points. Maximum (limit) goals don't earn points.</p>
+    ` : ''}
     <div class="card">
       <h3>Shared Life</h3>
       <p>Entries marked "Shared Life" — <strong>${sharedLife.ThisWeek}</strong> this week, <strong>${sharedLife.ThisMonth}</strong> this month.</p>
@@ -68,6 +122,10 @@ function render(progress, sharedLife) {
         Gym/Walk activities).
       </div>`}
   `;
+  if (points) {
+    const grid = document.getElementById('points-grid');
+    POINT_PERIODS.forEach(p => grid.appendChild(pointsCardEl(p.label, points[p.key])));
+  }
   if (progress.length) {
     const weeklyEl = document.getElementById('weekly-goals');
     weekly.forEach(p => weeklyEl.appendChild(goalCardEl(p)));
@@ -80,8 +138,11 @@ function render(progress, sharedLife) {
 
 async function load() {
   try {
-    const [progRes, sharedRes] = await Promise.all([fetchData('goalProgress'), fetchData('sharedLifeSummary')]);
-    render((progRes && progRes.progress) || [], sharedRes || { ThisWeek: 0, ThisMonth: 0 });
+    const [progRes, sharedRes, pointsRes] = await Promise.all([
+      fetchData('goalProgress'), fetchData('sharedLifeSummary'), fetchData('pointsSummary'),
+    ]);
+    render((progRes && progRes.progress) || [], sharedRes || { ThisWeek: 0, ThisMonth: 0 },
+           pointsRes && pointsRes.summary);
   } catch (e) {
     handleError(contentEl, e);
   }

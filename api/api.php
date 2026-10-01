@@ -920,6 +920,8 @@ function computeGoalProgress(int $userId): array {
       'Percent' => $percent,
       'Status' => $status,
       'HasActivities' => !empty($g['ActivityIds']),
+      'Weight' => $g['Weight'],
+      'Points' => goalEarnsPoints($g) ? round($actual * $g['Weight'], 2) : null,
     ];
   }
   return $out;
@@ -1026,6 +1028,52 @@ function engagementSummary(int $userId): array {
     'Month' => computeEngagement($userId, $mStart, $mEnd),
     'Quarter' => computeEngagement($userId, $qStart, $qEnd),
     'Year' => computeEngagement($userId, $yStart, $yEnd),
+  ];
+}
+
+// ---- Points (Dashboard) ----
+// A goal earns its weight once per qualifying log entry: weight 5, done
+// twice = 10 points. Same goals and same counting as engagement (active,
+// in season, linked activities), except Maximum goals earn nothing --
+// doing more of something you're limiting isn't worth rewarding.
+
+function goalEarnsPoints(array $goal): bool {
+  return $goal['GoalType'] !== 'Maximum';
+}
+
+function computePoints(int $userId, string $start, string $end): array {
+  $seasons = seasonsById($userId);
+  $goals = array_filter(listGoals($userId), fn($g) => $g['Active'] && goalEarnsPoints($g) && goalInSeasonNow($g, $seasons));
+  $total = 0.0;
+  $breakdown = [];
+  foreach ($goals as $g) {
+    $count = goalActualCount($userId, $g['ActivityIds'], $start, $end);
+    $points = $count * $g['Weight'];
+    $total += $points;
+    $breakdown[] = [
+      'GoalId' => $g['Id'],
+      'Name' => $g['Name'],
+      'Count' => $count,
+      'Weight' => $g['Weight'],
+      'Points' => round($points, 2),
+      'HasActivities' => !empty($g['ActivityIds']),
+    ];
+  }
+  return ['PeriodStart' => $start, 'PeriodEnd' => $end, 'Points' => round($total, 2), 'Goals' => $breakdown];
+}
+
+function pointsSummary(int $userId): array {
+  [$wStart, $wEnd] = weekRange();
+  [$r4Start, $r4End] = rolling4WeekRange();
+  [$mStart, $mEnd] = monthRange();
+  [$qStart, $qEnd] = quarterRange();
+  [$yStart, $yEnd] = yearRange();
+  return [
+    'Week' => computePoints($userId, $wStart, $wEnd),
+    'Rolling4Weeks' => computePoints($userId, $r4Start, $r4End),
+    'Month' => computePoints($userId, $mStart, $mEnd),
+    'Quarter' => computePoints($userId, $qStart, $qEnd),
+    'Year' => computePoints($userId, $yStart, $yEnd),
   ];
 }
 
@@ -2073,6 +2121,11 @@ switch ($action) {
   case 'engagementSummary': {
     $user = requireMember();
     respond(['ok' => true, 'summary' => engagementSummary((int)$user['id'])]);
+  }
+
+  case 'pointsSummary': {
+    $user = requireMember();
+    respond(['ok' => true, 'summary' => pointsSummary((int)$user['id'])]);
   }
 
   case 'engagementHeatmap': {
