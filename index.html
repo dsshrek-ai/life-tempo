@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Today | Life Tempo</title>
-<link rel="stylesheet" href="style.css?v=20261002">
+<link rel="stylesheet" href="style.css?v=20261002b">
 </head>
 <body>
 
@@ -31,7 +31,7 @@
 
 <footer class="site-footer">Life Tempo — Phase 7: Travel, Contract Work, and CSV Export</footer>
 
-<script src="js/api.js?v=20261002"></script>
+<script src="js/api.js?v=20261002b"></script>
 <script>
 const statusEl = document.getElementById('status');
 const contentEl = document.getElementById('content');
@@ -44,6 +44,9 @@ let LEARNING_PROJECTS = [];
 let CLIENTS = [];
 let UPCOMING = [];
 let editingId = null;
+// Activity ids whose grouped Today entries are expanded -- kept across the
+// re-render that follows an edit or delete so the list doesn't snap shut.
+const expandedGroups = new Set();
 let DAY_STATUS = { DayType: 'Home' };
 let PREFS = { ShowTravel: true, ShowBillable: true };
 
@@ -298,7 +301,58 @@ function renderTodayList(entries) {
     list.innerHTML = '<p class="note">Nothing logged yet today.</p>';
     return;
   }
-  entries.forEach(e => list.appendChild(logRowEl(e, startEdit, confirmDelete)));
+  // One row per activity: an activity logged several times (e.g. four
+  // 15-minute quick logs) shows as a single total, and its Edit button
+  // expands the individual entries for editing or deleting.
+  const groups = new Map();
+  entries.forEach(e => {
+    if (!groups.has(e.ActivityId)) groups.set(e.ActivityId, []);
+    groups.get(e.ActivityId).push(e);
+  });
+  groups.forEach((group, activityId) => {
+    if (group.length === 1) {
+      list.appendChild(logRowEl(group[0], startEdit, confirmDelete));
+      return;
+    }
+    list.appendChild(groupRowEl(activityId, group));
+  });
+}
+
+function groupRowEl(activityId, group) {
+  const wrap = document.createElement('div');
+  const minutes = group.reduce((sum, e) => sum + (e.DurationMinutes || 0), 0);
+  const any = key => group.some(e => e[key]);
+  const meta = [minutes ? formatDuration(minutes) : null, `${group.length} entries`].filter(Boolean).join(' · ');
+
+  const row = document.createElement('div');
+  row.className = 'log-row';
+  row.innerHTML = `
+    <div class="lr-main">
+      <div class="lr-activity">${escapeHtml(group[0].ActivityName)}
+        ${any('Productive') ? '<span class="badge productive">Productive</span>' : ''}
+        ${any('Billable') ? '<span class="badge billable">Billable</span>' : ''}
+        ${any('SharedLife') ? '<span class="badge tracked">Shared Life</span>' : ''}
+      </div>
+      <div class="lr-meta">${escapeHtml(meta)}</div>
+    </div>
+    <div class="lr-actions"><button type="button" class="btn secondary"></button></div>`;
+  const toggle = row.querySelector('button');
+
+  const detail = document.createElement('div');
+  detail.className = 'log-group-entries';
+  group.forEach(e => detail.appendChild(logRowEl(e, startEdit, confirmDelete)));
+
+  function show(open) {
+    detail.style.display = open ? 'block' : 'none';
+    toggle.textContent = open ? 'Close ▴' : 'Edit ▾';
+    if (open) expandedGroups.add(activityId); else expandedGroups.delete(activityId);
+  }
+  toggle.addEventListener('click', () => show(detail.style.display === 'none'));
+  show(expandedGroups.has(activityId));
+
+  wrap.appendChild(row);
+  wrap.appendChild(detail);
+  return wrap;
 }
 
 function startEdit(entry) {

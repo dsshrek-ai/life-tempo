@@ -209,6 +209,8 @@ table.heatmap td.heat-none { background: var(--tint); color: var(--muted); }
 .log-row .lr-meta { color: var(--muted); font-size: 0.88rem; }
 .log-row .lr-notes { color: var(--muted); font-size: 0.9rem; margin-top: 0.15rem; }
 .log-row .lr-actions .btn { font-size: 0.82rem; padding: 0.3rem 0.6rem; }
+.log-group-entries { margin-left: 1rem; padding-left: 0.6rem; border-left: 3px solid var(--tint); }
+.log-group-entries .log-row .lr-activity { font-weight: normal; }
 
 .day-heading {
   color: var(--primary-dark);
