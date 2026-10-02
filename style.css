@@ -192,6 +192,7 @@ table.heatmap td.heat-none { background: var(--tint); color: var(--muted); }
 /* ---- quick log strip ---- */
 .quick-log-strip { display: flex; flex-wrap: wrap; gap: 0.5rem; }
 .quick-log-strip .btn { font-size: 0.92rem; padding: 0.5rem 0.9rem; }
+.quick-log-strip .quick-mins { font-weight: normal; opacity: 0.9; white-space: nowrap; }
 
 /* ---- activity log list ---- */
 .log-row {

@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Dashboard | Life Tempo</title>
-<link rel="stylesheet" href="style.css?v=20261001">
+<link rel="stylesheet" href="style.css?v=20261002">
 </head>
 <body>
 
@@ -31,7 +31,7 @@
 
 <footer class="site-footer">Life Tempo — Phase 7: Travel, Contract Work, and CSV Export</footer>
 
-<script src="js/api.js?v=20261001"></script>
+<script src="js/api.js?v=20261002"></script>
 <script>
 const statusEl = document.getElementById('status');
 const contentEl = document.getElementById('content');
@@ -59,7 +59,7 @@ function pointsBreakdownHtml(goals) {
     </tr>`).join('');
   return `
     <table class="breakdown-table">
-      <thead><tr><th>Goal</th><th>Done</th><th>Weight</th><th>Points</th></tr></thead>
+      <thead><tr><th>Goal</th><th>Increments</th><th>Weight</th><th>Points</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>`;
 }
@@ -98,7 +98,7 @@ function render(progress, sharedLife, points) {
     ${points ? `
       <h2 style="margin-top:0;">Points</h2>
       <div class="score-grid" id="points-grid"></div>
-      <p class="note" style="font-size:0.85rem;">Each time you log an activity linked to a goal, you earn that goal's weight in points — weight 5, done twice, is 10 points. Maximum (limit) goals don't earn points.</p>
+      <p class="note" style="font-size:0.85rem;">You earn a goal's weight for every full increment you log of its activities — an activity's increment is its typical duration (a quick log is one increment). Weight 5 and a 60-minute entry on a 30-minute activity is 2 increments, 10 points. Entries with no minutes count as one increment. Maximum (limit) goals don't earn points.</p>
     ` : ''}
     <div class="card">
       <h3>Shared Life</h3>

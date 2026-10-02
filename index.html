@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Today | Life Tempo</title>
-<link rel="stylesheet" href="style.css?v=20261001">
+<link rel="stylesheet" href="style.css?v=20261002">
 </head>
 <body>
 
@@ -31,7 +31,7 @@
 
 <footer class="site-footer">Life Tempo — Phase 7: Travel, Contract Work, and CSV Export</footer>
 
-<script src="js/api.js?v=20261001"></script>
+<script src="js/api.js?v=20261002"></script>
 <script>
 const statusEl = document.getElementById('status');
 const contentEl = document.getElementById('content');
@@ -70,6 +70,12 @@ function formatUpcomingWhen(startDateTime) {
 
 function renderShell(todayEntries) {
   const quickLogActivities = activeActivities().filter(a => a.QuickLog);
+  // Today's total minutes per activity (quick and manual entries alike),
+  // shown on each Quick Log button.
+  const minutesToday = {};
+  todayEntries.forEach(e => {
+    if (e.DurationMinutes) minutesToday[e.ActivityId] = (minutesToday[e.ActivityId] || 0) + e.DurationMinutes;
+  });
 
   contentEl.innerHTML = `
     ${ACTIVITIES.length === 0 ? `
@@ -103,7 +109,10 @@ function renderShell(todayEntries) {
       <div class="card">
         <h3>Quick Log</h3>
         <div class="quick-log-strip">
-          ${quickLogActivities.map(a => `<button type="button" class="btn accent" data-quick="${a.Id}">${escapeHtml(a.Name)} ✓</button>`).join('')}
+          ${quickLogActivities.map(a => {
+            const mins = minutesToday[a.Id] || 0;
+            return `<button type="button" class="btn accent" data-quick="${a.Id}">${escapeHtml(a.Name)} ✓${mins ? ` <span class="quick-mins">· ${mins} min</span>` : ''}</button>`;
+          }).join('')}
         </div>
       </div>` : ''}
 

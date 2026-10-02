@@ -881,6 +881,33 @@ function goalActualCount(int $userId, array $activityIds, string $start, string 
   return $count;
 }
 
+// Point "increments" for a goal's activities in a period. An activity's
+// typical duration is its increment: each entry earns FLOOR(minutes /
+// increment) -- a quick log (one increment) earns 1, a manual 40 min on a
+// 15 min activity earns 2, under 15 min earns 0. An entry with no minutes,
+// or an activity with no typical duration, earns 1 per entry as before.
+// Engagement and the goal cards' "X of Y" still count entries
+// (goalActualCount); only points use increments.
+function goalPointUnits(int $userId, array $activityIds, string $start, string $end): int {
+  if (!$activityIds) { return 0; }
+  $placeholders = implode(',', array_fill(0, count($activityIds), '?'));
+  $types = 'iss' . str_repeat('i', count($activityIds));
+  $params = array_merge([$userId, $start, $end], $activityIds);
+  $stmt = db()->prepare(
+    "SELECT COALESCE(SUM(CASE
+         WHEN a.typical_duration_minutes > 0 AND al.duration_minutes IS NOT NULL
+           THEN FLOOR(al.duration_minutes / a.typical_duration_minutes)
+         ELSE 1 END), 0)
+     FROM lt_activity_log al JOIN lt_activities a ON a.id = al.activity_id
+     WHERE al.user_id = ? AND al.activity_date BETWEEN ? AND ? AND al.activity_id IN ($placeholders)"
+  );
+  $stmt->bind_param($types, ...$params);
+  $stmt->execute();
+  $units = (int)$stmt->get_result()->fetch_row()[0];
+  $stmt->close();
+  return $units;
+}
+
 function computeGoalProgress(int $userId): array {
   $seasons = seasonsById($userId);
   $goals = array_filter(listGoals($userId), fn($g) => $g['Active'] && goalInSeasonNow($g, $seasons));
@@ -921,7 +948,7 @@ function computeGoalProgress(int $userId): array {
       'Status' => $status,
       'HasActivities' => !empty($g['ActivityIds']),
       'Weight' => $g['Weight'],
-      'Points' => goalEarnsPoints($g) ? round($actual * $g['Weight'], 2) : null,
+      'Points' => goalEarnsPoints($g) ? round(goalPointUnits($userId, $g['ActivityIds'], $start, $end) * $g['Weight'], 2) : null,
     ];
   }
   return $out;
@@ -1032,8 +1059,8 @@ function engagementSummary(int $userId): array {
 }
 
 // ---- Points (Dashboard) ----
-// A goal earns its weight once per qualifying log entry: weight 5, done
-// twice = 10 points. Same goals and same counting as engagement (active,
+// A goal earns its weight once per increment logged (see goalPointUnits):
+// weight 5, two increments = 10 points. Same goals as engagement (active,
 // in season, linked activities), except Maximum goals earn nothing --
 // doing more of something you're limiting isn't worth rewarding.
 
@@ -1047,13 +1074,13 @@ function computePoints(int $userId, string $start, string $end): array {
   $total = 0.0;
   $breakdown = [];
   foreach ($goals as $g) {
-    $count = goalActualCount($userId, $g['ActivityIds'], $start, $end);
-    $points = $count * $g['Weight'];
+    $units = goalPointUnits($userId, $g['ActivityIds'], $start, $end);
+    $points = $units * $g['Weight'];
     $total += $points;
     $breakdown[] = [
       'GoalId' => $g['Id'],
       'Name' => $g['Name'],
-      'Count' => $count,
+      'Count' => $units,
       'Weight' => $g['Weight'],
       'Points' => round($points, 2),
       'HasActivities' => !empty($g['ActivityIds']),
