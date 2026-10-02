@@ -342,6 +342,9 @@ function applyNavVisibility(prefs) {
   };
   if (!prefs.ShowTravel) hide('trips.html');
   if (!prefs.ShowTravel && !prefs.ShowBillable) hide('reports.html');
+  // Anything marked .billable-only (the Billable checkbox) and every
+  // Billable badge disappear when Billable/Invoice is turned off in Manage.
+  document.body.classList.toggle('hide-billable', !prefs.ShowBillable);
 }
 
 // ---- Phase 3 shared helpers (Dashboard / Today's day-status) ----

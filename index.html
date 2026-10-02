@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Today | Life Tempo</title>
-<link rel="stylesheet" href="style.css?v=20261002b">
+<link rel="stylesheet" href="style.css?v=20261002c">
 </head>
 <body>
 
@@ -31,7 +31,7 @@
 
 <footer class="site-footer">Life Tempo — Phase 7: Travel, Contract Work, and CSV Export</footer>
 
-<script src="js/api.js?v=20261002b"></script>
+<script src="js/api.js?v=20261002c"></script>
 <script>
 const statusEl = document.getElementById('status');
 const contentEl = document.getElementById('content');
@@ -47,6 +47,26 @@ let editingId = null;
 // Activity ids whose grouped Today entries are expanded -- kept across the
 // re-render that follows an edit or delete so the list doesn't snap shut.
 const expandedGroups = new Set();
+// Whether the log form's "More details" section (Location on down) is open;
+// remembered across the re-render after each save.
+let detailsOpen = false;
+
+function setDetailsOpen(open) {
+  detailsOpen = open;
+  document.getElementById('f-more').style.display = open ? 'block' : 'none';
+  const btn = document.getElementById('f-more-toggle');
+  btn.textContent = open ? 'Fewer details ▴' : 'More details ▾';
+  btn.setAttribute('aria-expanded', String(open));
+}
+
+// True when an entry being edited has anything filled in under More details,
+// so editing it never hides values that are actually set. (Productive is
+// left out -- it's usually just the activity's default.)
+function entryHasDetails(entry) {
+  return !!(entry.LocationId || entry.CostAmount !== null || entry.Notes || entry.SharedLife ||
+    entry.LearningProjectId || entry.ClientId || entry.Billable ||
+    (entry.PersonIds && entry.PersonIds.length) || (entry.TagIds && entry.TagIds.length));
+}
 let DAY_STATUS = { DayType: 'Home' };
 let PREFS = { ShowTravel: true, ShowBillable: true };
 
@@ -148,6 +168,8 @@ function renderShell(todayEntries) {
           </div>
         </div>
 
+        <button type="button" class="btn secondary more-toggle" id="f-more-toggle" aria-expanded="${detailsOpen}" aria-controls="f-more">${detailsOpen ? 'Fewer details ▴' : 'More details ▾'}</button>
+        <div id="f-more" style="display:${detailsOpen ? 'block' : 'none'};">
         <div class="form-grid">
           <div>
             <label for="f-location">Location</label>
@@ -206,13 +228,14 @@ function renderShell(todayEntries) {
           <input type="checkbox" id="f-productive">
           <label for="f-productive">Productive</label>
         </div>
-        <div class="checkline">
+        <div class="checkline billable-only">
           <input type="checkbox" id="f-billable">
           <label for="f-billable">Billable</label>
         </div>
         <div class="checkline">
           <input type="checkbox" id="f-shared-life">
           <label for="f-shared-life">Shared Life (intentionally done together)</label>
+        </div>
         </div>
 
         <p>
@@ -228,6 +251,7 @@ function renderShell(todayEntries) {
     </div>
   `;
 
+  document.getElementById('f-more-toggle').addEventListener('click', () => setDetailsOpen(!detailsOpen));
   contentEl.querySelectorAll('[data-quick]').forEach(btn => {
     btn.addEventListener('click', () => quickLog(Number(btn.dataset.quick), btn));
   });
@@ -376,6 +400,7 @@ function startEdit(entry) {
   setMultiSelectValues('f-people', entry.PersonIds || []);
   setMultiSelectValues('f-tags', entry.TagIds || []);
   document.getElementById('f-cancel').style.display = 'inline-block';
+  if (entryHasDetails(entry)) setDetailsOpen(true);
   document.getElementById('form-heading').scrollIntoView({ behavior: 'smooth' });
 }
 
