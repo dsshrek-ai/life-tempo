@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Print Goals | Life Tempo</title>
+<link rel="stylesheet" href="style.css?v=20261002c">
+<style>
+  /* The goal sheet itself: plain and readable on paper. */
+  .sheet { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1.4rem 1.6rem; }
+  .sheet h2 { margin: 0; }
+  .sheet .sheet-dates { color: var(--muted); margin: 0.2rem 0 1rem; }
+  .sheet h3 { margin: 1.2rem 0 0.4rem; padding-bottom: 0.2rem; border-bottom: 2px solid var(--primary); color: var(--primary-dark); font-size: 1.05rem; }
+  .goal-list { list-style: none; margin: 0; padding: 0; }
+  .goal-list li { padding: 0.45rem 0; border-bottom: 1px solid var(--border); break-inside: avoid; }
+  .goal-list li:last-child { border-bottom: 0; }
+  .goal-name { font-weight: 700; }
+  .goal-counts { color: var(--muted); font-size: 0.82rem; }
+  .print-controls { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: center; margin-bottom: 1rem; }
+  .print-controls .seg { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+  .print-controls .seg button { font: inherit; font-size: 0.9rem; border: 0; background: var(--surface); color: var(--primary-dark); padding: 0.45rem 0.9rem; cursor: pointer; }
+  .print-controls .seg button + button { border-left: 1px solid var(--border); }
+  .print-controls .seg button[aria-pressed="true"] { background: var(--primary); color: #fff; }
+
+  @media print {
+    @page { margin: 0.6in; }
+    html { font-size: 14pt; }
+    body { background: #fff; }
+    header.site-header, footer.site-footer, .print-controls, #status { display: none !important; }
+    main { max-width: none; padding: 0; margin: 0; }
+    .sheet { border: 0; padding: 0; }
+    .sheet h3 { color: #000; border-bottom-color: #000; }
+    .goal-counts { color: #333; }
+  }
+</style>
+</head>
+<body>
+
+<header class="site-header">
+  <div class="bar">
+    <h1>🧭 Life Tempo</h1>
+    <nav>
+      <a href="index.html">Today</a>
+      <a href="plan.html">Plan</a>
+      <a href="history.html">History</a>
+      <a href="trips.html">Trips</a>
+      <a href="dashboard.html">Dashboard</a>
+      <a href="engagement.html">Engagement</a>
+      <a href="reports.html">Reports</a>
+      <a href="manage.html">Manage</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <div id="status"></div>
+  <div id="content"><p class="note">Loading…</p></div>
+</main>
+
+<footer class="site-footer">Life Tempo — Phase 7: Travel, Contract Work, and CSV Export</footer>
+
+<script src="js/api.js?v=20261002c"></script>
+<script>
+// A printable reminder of what you're aiming for -- the goals themselves,
+// not your progress -- for this week or next week.
+const contentEl = document.getElementById('content');
+let GOALS = [];
+let ACTIVITIES = {};
+let SEASONS = {};
+let which = 'this'; // 'this' | 'next'
+
+function ymd(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+// Monday-Sunday, matching the rest of the app.
+function weekDays(offsetWeeks) {
+  const today = new Date();
+  today.setHours(12, 0, 0, 0);
+  const monday = new Date(today);
+  monday.setDate(today.getDate() - ((today.getDay() + 6) % 7) + offsetWeeks * 7);
+  return Array.from({ length: 7 }, (_, i) => { const d = new Date(monday); d.setDate(monday.getDate() + i); return d; });
+}
+
+function monthDayInRange(md, start, end) {
+  return start <= end ? md >= start && md <= end : md >= start || md <= end;
+}
+
+// A goal with no seasons always applies; a seasonal one applies if any of
+// its active seasons covers at least one day of the week.
+function goalInSeasonDuring(goal, days) {
+  if (!goal.SeasonIds.length) return true;
+  return goal.SeasonIds.some(id => {
+    const s = SEASONS[id];
+    return s && s.Active && days.some(d => monthDayInRange(ymd(d).slice(5), s.StartMonthDay, s.EndMonthDay));
+  });
+}
+
+function amount(n) {
+  const v = Math.round(Number(n) * 100) / 100;
+  return `${v.toLocaleString()} ${v === 1 ? 'time' : 'times'}`;
+}
+
+function goalSentence(g, monthName) {
+  const when = { Daily: 'a day', Weekly: 'this week', Monthly: `in ${monthName}` }[g.CadenceType] || '';
+  if (g.GoalType === 'TrackOnly' || g.TargetValue === null) return `keep track ${g.CadenceType === 'Daily' ? 'each day' : when}`;
+  const t = amount(g.TargetValue);
+  if (g.GoalType === 'Minimum') return `at least ${t} ${when}`;
+  if (g.GoalType === 'Maximum') return `no more than ${t} ${when}`;
+  return `aim for ${t} ${when}`;
+}
+
+function render() {
+  const days = weekDays(which === 'next' ? 1 : 0);
+  const first = days[0];
+  const last = days[6];
+  const monthNames = [...new Set(days.map(d => d.toLocaleDateString(undefined, { month: 'long' })))];
+  const monthName = monthNames.join(' / ');
+  const goals = GOALS.filter(g => g.Active && goalInSeasonDuring(g, days))
+    .sort((a, b) => b.Weight - a.Weight || a.Name.localeCompare(b.Name));
+
+  const section = (title, cadence) => {
+    const list = goals.filter(g => g.CadenceType === cadence);
+    if (!list.length) return '';
+    return `<h3>${escapeHtml(title)}</h3><ul class="goal-list">${list.map(g => {
+      const counts = g.ActivityIds.map(id => ACTIVITIES[id]).filter(Boolean);
+      return `<li><span class="goal-name">${escapeHtml(g.Name)}</span> — ${escapeHtml(goalSentence(g, monthName))}
+        ${counts.length ? `<div class="goal-counts">Counts: ${escapeHtml(counts.join(', '))}</div>` : ''}</li>`;
+    }).join('')}</ul>`;
+  };
+
+  const range = `${first.toLocaleDateString(undefined, { weekday: 'short', month: 'long', day: 'numeric' })} – ${last.toLocaleDateString(undefined, { weekday: 'short', month: 'long', day: 'numeric', year: 'numeric' })}`;
+  const body = section('Every day', 'Daily') + section('This week', 'Weekly') + section(`This month (${monthName})`, 'Monthly');
+
+  contentEl.innerHTML = `
+    <div class="print-controls">
+      <div class="seg" role="group" aria-label="Which week">
+        <button type="button" data-week="this" aria-pressed="${which === 'this'}">This week</button>
+        <button type="button" data-week="next" aria-pressed="${which === 'next'}">Next week</button>
+      </div>
+      <button type="button" class="btn" id="print-btn">🖨 Print</button>
+      <a href="dashboard.html">Back to Dashboard</a>
+    </div>
+    <div class="sheet">
+      <h2>My Goals</h2>
+      <p class="sheet-dates">Week of ${escapeHtml(range)}</p>
+      ${body || '<p class="note">No active goals for this week. Add goals on <a href="manage.html">Manage</a>.</p>'}
+    </div>`;
+  contentEl.querySelectorAll('[data-week]').forEach(b => b.addEventListener('click', () => { which = b.dataset.week; render(); }));
+  document.getElementById('print-btn').addEventListener('click', () => window.print());
+}
+
+async function load() {
+  try {
+    const [g, a, s] = await Promise.all([fetchData('goals'), fetchData('activities'), fetchData('seasons')]);
+    GOALS = g.goals || [];
+    ACTIVITIES = Object.fromEntries((a.activities || []).map(x => [x.Id, x.Name]));
+    SEASONS = Object.fromEntries((s.seasons || []).map(x => [x.Id, x]));
+    if (new URLSearchParams(location.search).get('week') === 'next') which = 'next';
+    render();
+  } catch (e) {
+    handleError(contentEl, e);
+  }
+}
+
+(async () => {
+  await captureSso();
+  applyNavVisibility(await loadPreferences());
+  await load();
+})();
+</script>
+</body>
+</html>

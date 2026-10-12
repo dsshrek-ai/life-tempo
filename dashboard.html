@@ -118,6 +118,9 @@ function render(progress, sharedLife, points) {
   const weekly = progress.filter(p => p.CadenceType !== 'Monthly');
   const monthly = progress.filter(p => p.CadenceType === 'Monthly');
   contentEl.innerHTML = `
+    <p style="margin-top:0;text-align:right;">
+      <a class="btn secondary" href="print-goals.html" style="font-size:0.85rem;padding:0.35rem 0.75rem;">🖨 Print my goals</a>
+    </p>
     ${points ? `
       <h2 style="margin-top:0;">Points</h2>
       <div class="score-grid" id="points-grid"></div>
