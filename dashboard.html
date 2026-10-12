@@ -91,6 +91,29 @@ function pointsCardEl(periodLabel, pts) {
   return card;
 }
 
+// Points per week for the last six weeks, newest first, with a bar scaled
+// to the best week so the trend is easy to see.
+function weeklyPointsHtml(history) {
+  const max = Math.max(...history.map(w => Number(w.Points) || 0), 0);
+  const fmt = ymd => new Date(ymd + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  const rows = history.map((w, i) => {
+    const pct = max > 0 ? Math.round((Number(w.Points) || 0) / max * 100) : 0;
+    return `<tr>
+      <td style="white-space:nowrap;">${i === 0 ? '<strong>This week</strong> <em style="color:var(--muted);">(so far)</em>' : `${fmt(w.WeekStart)} – ${fmt(w.WeekEnd)}`}</td>
+      <td style="width:45%;"><div style="height:0.7rem;border-radius:4px;background:var(--primary);opacity:${i === 0 ? 1 : 0.7};width:${pct}%;min-width:${pct ? 3 : 0}px;"></div></td>
+      <td style="text-align:right;"><strong>${formatPoints(w.Points)}</strong></td>
+    </tr>`;
+  }).join('');
+  return `
+    <div class="card">
+      <h3>Points per Week — last 6 weeks</h3>
+      <table class="breakdown-table">
+        <thead><tr><th>Week (Mon–Sun)</th><th></th><th style="text-align:right;">Points</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+}
+
 function render(progress, sharedLife, points) {
   const weekly = progress.filter(p => p.CadenceType !== 'Monthly');
   const monthly = progress.filter(p => p.CadenceType === 'Monthly');
@@ -98,6 +121,7 @@ function render(progress, sharedLife, points) {
     ${points ? `
       <h2 style="margin-top:0;">Points</h2>
       <div class="score-grid" id="points-grid"></div>
+      ${points.WeeklyHistory ? weeklyPointsHtml(points.WeeklyHistory) : ''}
       <p class="note" style="font-size:0.85rem;">You earn a goal's weight for every full increment you log of its activities — an activity's increment is its typical duration (a quick log is one increment). Weight 5 and a 60-minute entry on a 30-minute activity is 2 increments, 10 points. Entries with no minutes count as one increment. Maximum (limit) goals don't earn points.</p>
     ` : ''}
     <div class="card">

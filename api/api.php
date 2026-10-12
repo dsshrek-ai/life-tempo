@@ -1101,7 +1101,23 @@ function pointsSummary(int $userId): array {
     'Month' => computePoints($userId, $mStart, $mEnd),
     'Quarter' => computePoints($userId, $qStart, $qEnd),
     'Year' => computePoints($userId, $yStart, $yEnd),
+    'WeeklyHistory' => weeklyPointsHistory($userId, 6),
   ];
+}
+
+// Total points for each of the last $weeks Monday-Sunday weeks, newest
+// first; the first row is this week so far. Same rules as the period cards
+// (today's goals and weights).
+function weeklyPointsHistory(int $userId, int $weeks): array {
+  [$thisWeekStart] = weekRange();
+  $rows = [];
+  for ($i = 0; $i < $weeks; $i++) {
+    $start = (new DateTime($thisWeekStart))->modify('-' . ($i * 7) . ' days');
+    $end = (clone $start)->modify('+6 days');
+    $pts = computePoints($userId, $start->format('Y-m-d'), $end->format('Y-m-d'));
+    $rows[] = ['WeekStart' => $pts['PeriodStart'], 'WeekEnd' => $pts['PeriodEnd'], 'Points' => $pts['Points']];
+  }
+  return $rows;
 }
 
 // The heat map: one row per week for the last $weeks weeks, each with the
