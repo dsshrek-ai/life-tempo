@@ -1394,6 +1394,17 @@ function plannedEventFields(int $userId, array $b): array {
   }
   $locationId = ownedId('lt_locations', isset($b['locationId']) && $b['locationId'] !== '' ? (int)$b['locationId'] : null, $userId);
   $notes = nullIfEmpty((string)($b['notes'] ?? ''));
+  // A place typed right on the Plan form (newLocation: {name, address})
+  // becomes a regular saved location, so it maps, logs and can be picked
+  // again later. Created last, after everything else has validated, so a
+  // rejected event never leaves a stray location behind.
+  if (is_array($b['newLocation'] ?? null)) {
+    $address = trim((string)($b['newLocation']['address'] ?? ''));
+    $name = trim((string)($b['newLocation']['name'] ?? '')) ?: $address;
+    if ($name !== '') {
+      $locationId = addLocation($userId, ['name' => mb_substr($name, 0, 150), 'address' => mb_substr($address, 0, 300)]);
+    }
+  }
   return [$title, $activityId, $startDateTime, $endDateTime, $locationId, $notes];
 }
 
