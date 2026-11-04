@@ -1341,16 +1341,192 @@ function requireDateTime(string $date, $time, string $label): string {
   return $combined;
 }
 
-function listPlannedEvents(int $userId, ?string $status): array {
-  $sql = 'SELECT pe.id, pe.activity_id, a.name AS activity_name, pe.title, pe.start_datetime,
+// ---- Plan sharing ----
+// One row per "owner shares their planned events with viewer". The viewer
+// sees the owner's plans mixed into their own and can edit them (or copy
+// one into their own plans); completing and deleting stay with the owner.
+// Each person only ever shares their own plans, so no approval step.
+
+function planOwnersSharedWith(int $viewerId): array {
+  $stmt = db()->prepare(
+    'SELECT u.id, u.username, u.display_name FROM lt_plan_shares s
+     JOIN users u ON u.id = s.owner_user_id
+     WHERE s.viewer_user_id = ? ORDER BY u.display_name, u.username'
+  );
+  $stmt->bind_param('i', $viewerId);
+  $stmt->execute();
+  $rows = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+  $stmt->close();
+  return array_map(fn($r) => [
+    'UserId' => (int)$r['id'], 'Email' => (string)$r['username'],
+    'Name' => trim((string)($r['display_name'] ?? '')) ?: (string)$r['username'],
+  ], $rows);
+}
+
+function planViewersOf(int $ownerId): array {
+  $stmt = db()->prepare(
+    'SELECT u.id, u.username, u.display_name FROM lt_plan_shares s
+     JOIN users u ON u.id = s.viewer_user_id
+     WHERE s.owner_user_id = ? ORDER BY u.display_name, u.username'
+  );
+  $stmt->bind_param('i', $ownerId);
+  $stmt->execute();
+  $rows = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+  $stmt->close();
+  return array_map(fn($r) => [
+    'UserId' => (int)$r['id'], 'Email' => (string)$r['username'],
+    'Name' => trim((string)($r['display_name'] ?? '')) ?: (string)$r['username'],
+  ], $rows);
+}
+
+function canEditPlansOf(int $viewerId, int $ownerId): bool {
+  if ($viewerId === $ownerId) {
+    return true;
+  }
+  $stmt = db()->prepare('SELECT 1 FROM lt_plan_shares WHERE owner_user_id = ? AND viewer_user_id = ?');
+  $stmt->bind_param('ii', $ownerId, $viewerId);
+  $stmt->execute();
+  $ok = (bool)$stmt->get_result()->fetch_row();
+  $stmt->close();
+  return $ok;
+}
+
+// The owner of a planned event the caller may edit -- fails otherwise.
+function editablePlanOwner(int $viewerId, int $eventId): int {
+  $stmt = db()->prepare('SELECT user_id FROM lt_planned_events WHERE id = ?');
+  $stmt->bind_param('i', $eventId);
+  $stmt->execute();
+  $row = $stmt->get_result()->fetch_row();
+  $stmt->close();
+  if (!$row || !canEditPlansOf($viewerId, (int)$row[0])) {
+    fail('Planned event not found', 404);
+  }
+  return (int)$row[0];
+}
+
+function addPlanShare(int $ownerId, string $email): array {
+  $email = trim($email);
+  if ($email === '') {
+    fail('Enter an email address');
+  }
+  $stmt = db()->prepare('SELECT id, username, display_name FROM users WHERE username = ?');
+  $stmt->bind_param('s', $email);
+  $stmt->execute();
+  $viewer = $stmt->get_result()->fetch_assoc();
+  $stmt->close();
+  if (!$viewer || !hasAppAccess($viewer)) {
+    return ['ok' => false, 'reason' => 'not-found'];
+  }
+  $viewerId = (int)$viewer['id'];
+  if ($viewerId === $ownerId) {
+    return ['ok' => false, 'reason' => 'self'];
+  }
+  $stmt = db()->prepare('INSERT IGNORE INTO lt_plan_shares (owner_user_id, viewer_user_id) VALUES (?, ?)');
+  $stmt->bind_param('ii', $ownerId, $viewerId);
+  $stmt->execute();
+  $stmt->close();
+  return ['ok' => true];
+}
+
+function removePlanShare(int $ownerId, int $viewerId): void {
+  $stmt = db()->prepare('DELETE FROM lt_plan_shares WHERE owner_user_id = ? AND viewer_user_id = ?');
+  $stmt->bind_param('ii', $ownerId, $viewerId);
+  $stmt->execute();
+  $stmt->close();
+}
+
+// The owner's active activities and locations, for editing one of their plans.
+function planLookups(int $ownerId): array {
+  $out = [];
+  foreach (['activities' => 'lt_activities', 'locations' => 'lt_locations'] as $key => $table) {
+    $stmt = db()->prepare("SELECT id, name FROM `$table` WHERE user_id = ? AND active = 1 ORDER BY name");
+    $stmt->bind_param('i', $ownerId);
+    $stmt->execute();
+    $out[$key] = array_map(fn($r) => ['Id' => (int)$r['id'], 'Name' => (string)$r['name'], 'Active' => true],
+      $stmt->get_result()->fetch_all(MYSQLI_ASSOC));
+    $stmt->close();
+  }
+  return $out;
+}
+
+// Copies a plan the caller can see into the caller's own plans. Activity and
+// location ids belong to the source's owner, so they're matched by name in
+// the caller's own lists (a location with no match is created).
+function copyPlannedEvent(int $userId, int $eventId): int {
+  editablePlanOwner($userId, $eventId);
+  $stmt = db()->prepare(
+    'SELECT pe.title, pe.start_datetime, pe.end_datetime, pe.notes, a.name AS activity_name,
+            l.name AS location_name, l.address AS location_address
+     FROM lt_planned_events pe
+     LEFT JOIN lt_activities a ON a.id = pe.activity_id
+     LEFT JOIN lt_locations l ON l.id = pe.location_id
+     WHERE pe.id = ?'
+  );
+  $stmt->bind_param('i', $eventId);
+  $stmt->execute();
+  $src = $stmt->get_result()->fetch_assoc();
+  $stmt->close();
+
+  $activityId = '';
+  if ($src['activity_name'] !== null) {
+    $stmt = db()->prepare('SELECT id FROM lt_activities WHERE user_id = ? AND name = ? AND active = 1 LIMIT 1');
+    $stmt->bind_param('is', $userId, $src['activity_name']);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_row();
+    $stmt->close();
+    $activityId = $row ? (string)$row[0] : '';
+  }
+  $locationId = '';
+  $newLocation = null;
+  if ($src['location_name'] !== null) {
+    $address = (string)($src['location_address'] ?? '');
+    $stmt = db()->prepare(
+      "SELECT id FROM lt_locations WHERE user_id = ? AND name = ? AND COALESCE(address, '') = ?
+       ORDER BY active DESC LIMIT 1"
+    );
+    $stmt->bind_param('iss', $userId, $src['location_name'], $address);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_row();
+    $stmt->close();
+    if ($row) {
+      $locationId = (string)$row[0];
+    } else {
+      $newLocation = ['name' => $src['location_name'], 'address' => $address];
+    }
+  }
+  return addPlannedEvent($userId, [
+    'title' => $src['title'],
+    'activityId' => $activityId,
+    'locationId' => $locationId,
+    'newLocation' => $newLocation,
+    'startDate' => substr($src['start_datetime'], 0, 10),
+    'startTime' => substr($src['start_datetime'], 11, 5),
+    'endDate' => $src['end_datetime'] !== null ? substr($src['end_datetime'], 0, 10) : '',
+    'endTime' => $src['end_datetime'] !== null ? substr($src['end_datetime'], 11, 5) : '',
+    'notes' => (string)($src['notes'] ?? ''),
+  ]);
+}
+
+// $includeShared adds the plans of everyone who shares theirs with $userId
+// (lt_plan_shares), each tagged with its owner so the page can color them.
+function listPlannedEvents(int $userId, ?string $status, bool $includeShared = false): array {
+  $owners = [$userId];
+  if ($includeShared) {
+    foreach (planOwnersSharedWith($userId) as $o) {
+      $owners[] = $o['UserId'];
+    }
+  }
+  $sql = 'SELECT pe.id, pe.user_id, u.display_name AS owner_name, u.username AS owner_username,
+                 pe.activity_id, a.name AS activity_name, pe.title, pe.start_datetime,
                  pe.end_datetime, pe.location_id, l.name AS location_name, l.address AS location_address,
                  pe.status, pe.notes
           FROM lt_planned_events pe
+          JOIN users u ON u.id = pe.user_id
           LEFT JOIN lt_activities a ON a.id = pe.activity_id
           LEFT JOIN lt_locations l ON l.id = pe.location_id
-          WHERE pe.user_id = ?';
-  $types = 'i';
-  $params = [$userId];
+          WHERE pe.user_id IN (' . implode(',', array_fill(0, count($owners), '?')) . ')';
+  $types = str_repeat('i', count($owners));
+  $params = $owners;
   if ($status !== null) {
     $sql .= ' AND pe.status = ?';
     $types .= 's';
@@ -1365,6 +1541,9 @@ function listPlannedEvents(int $userId, ?string $status): array {
   while ($r = $res->fetch_assoc()) {
     $out[] = [
       'Id' => (int)$r['id'],
+      'OwnerId' => (int)$r['user_id'],
+      'OwnerName' => trim((string)($r['owner_name'] ?? '')) ?: (string)$r['owner_username'],
+      'Mine' => (int)$r['user_id'] === $userId,
       'ActivityId' => $r['activity_id'] !== null ? (int)$r['activity_id'] : null,
       'ActivityName' => (string)($r['activity_name'] ?? ''),
       'Title' => (string)$r['title'],
@@ -2194,7 +2373,45 @@ switch ($action) {
   case 'plannedEvents': {
     $user = requireMember();
     $status = isset($_GET['status']) && $_GET['status'] !== '' ? (string)$_GET['status'] : null;
-    respond(['ok' => true, 'events' => listPlannedEvents((int)$user['id'], $status)]);
+    $shared = !empty($_GET['shared']);
+    respond(['ok' => true, 'events' => listPlannedEvents((int)$user['id'], $status, $shared)]);
+  }
+
+  case 'planShares': {
+    $user = requireMember();
+    respond([
+      'ok' => true,
+      'sharingWith' => planViewersOf((int)$user['id']),
+      'sharedWithMe' => planOwnersSharedWith((int)$user['id']),
+    ]);
+  }
+
+  case 'addPlanShare': {
+    $user = requireMember();
+    respond(addPlanShare((int)$user['id'], (string)($body['email'] ?? '')));
+  }
+
+  case 'removePlanShare': {
+    $user = requireMember();
+    removePlanShare((int)$user['id'], (int)($body['userId'] ?? 0));
+    respond(['ok' => true]);
+  }
+
+  // Activity/location choices for editing a plan owned by someone who
+  // shares with the caller (their ids, not the caller's).
+  case 'planLookups': {
+    $user = requireMember();
+    $ownerId = (int)($_GET['ownerId'] ?? 0);
+    if (!canEditPlansOf((int)$user['id'], $ownerId)) {
+      fail('Not shared with you', 403);
+    }
+    respond(['ok' => true] + planLookups($ownerId));
+  }
+
+  case 'copyPlannedEvent': {
+    $user = requireMember();
+    $id = copyPlannedEvent((int)$user['id'], (int)($body['id'] ?? 0));
+    respond(['ok' => true, 'id' => $id]);
   }
 
   case 'addPlannedEvent': {
@@ -2207,7 +2424,9 @@ switch ($action) {
     $user = requireMember();
     $id = (int)($body['id'] ?? 0);
     if ($id <= 0) { fail('Missing event id'); }
-    updatePlannedEvent((int)$user['id'], $id, $body);
+    // Editing someone else's plan (shared with the caller) saves it as theirs:
+    // activity/location are checked against, and a new place added to, the owner.
+    updatePlannedEvent(editablePlanOwner((int)$user['id'], $id), $id, $body);
     respond(['ok' => true]);
   }
 

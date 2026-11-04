@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Manage | Life Tempo</title>
-<link rel="stylesheet" href="style.css?v=20261002c">
+<link rel="stylesheet" href="style.css?v=20261104">
 </head>
 <body>
 
@@ -31,7 +31,7 @@
 
 <footer class="site-footer">Life Tempo — Phase 7: Travel, Contract Work, and CSV Export</footer>
 
-<script src="js/api.js?v=20261002c"></script>
+<script src="js/api.js?v=20261104"></script>
 <script>
 const statusEl = document.getElementById('status');
 const contentEl = document.getElementById('content');
@@ -607,6 +607,11 @@ function render() {
       ${renderSettings()}
     </div>
     <div class="card">
+      <h3>Sharing</h3>
+      <p class="note">Share your planned events with someone else who uses Life Tempo, like your spouse. They'll see your plans mixed in with theirs on Plan and Today, in their own color, and can edit them or add one to their own plans. Completing and deleting stay with you. To see their plans too, they share with you the same way.</p>
+      <div id="share-area"><p class="note">Loading…</p></div>
+    </div>
+    <div class="card">
       <h3>Categories</h3>
       <p class="note">Broad life areas (Health, Spiritual, Music, ...) used to group activities for later reporting.</p>
       <div id="cat-table">${renderCategories()}</div>
@@ -665,6 +670,68 @@ function render() {
   contentEl.querySelectorAll('[data-act^="save-client"], [data-act="add-client"]').forEach(b => b.addEventListener('click', () => handleClientAction(b)));
 }
 
+// ---- Sharing (plans) ----
+async function loadSharing() {
+  const area = document.getElementById('share-area');
+  if (!area) return;
+  let res;
+  try {
+    res = await fetchData('planShares');
+  } catch (e) {
+    area.innerHTML = '<p class="note">Couldn&rsquo;t load sharing right now.</p>';
+    return;
+  }
+  const person = p => `${escapeHtml(p.Name)}${p.Name !== p.Email ? ` <span style="color: var(--muted);">(${escapeHtml(p.Email)})</span>` : ''}`;
+  area.innerHTML = `
+    <p><strong>You share your plans with:</strong></p>
+    ${res.sharingWith.length ? res.sharingWith.map(p => `
+      <div class="log-row">
+        <div class="lr-main">${person(p)}</div>
+        <div class="lr-actions"><button type="button" class="btn secondary" data-unshare="${p.UserId}" data-name="${escapeHtml(p.Name)}">Stop sharing</button></div>
+      </div>`).join('') : '<p class="note">No one yet.</p>'}
+    <div class="form-grid">
+      <div>
+        <label for="share-email">Share with (their Life Tempo email)</label>
+        <input type="email" id="share-email" placeholder="name@example.com">
+      </div>
+    </div>
+    <p><button type="button" class="btn" id="share-add">Share my plans</button></p>
+    <p><strong>Sharing their plans with you:</strong></p>
+    ${res.sharedWithMe.length ? res.sharedWithMe.map(p => `<div class="log-row"><div class="lr-main">${person(p)}</div></div>`).join('')
+      : '<p class="note">No one yet.</p>'}`;
+  document.getElementById('share-add').addEventListener('click', addShare);
+  document.getElementById('share-email').addEventListener('keydown', e => { if (e.key === 'Enter') addShare(); });
+  area.querySelectorAll('[data-unshare]').forEach(b => b.addEventListener('click', async () => {
+    if (!confirm(`Stop sharing your plans with ${b.dataset.name}?`)) return;
+    try {
+      await postAction('removePlanShare', { userId: Number(b.dataset.unshare) });
+      showStatus(`Stopped sharing with ${b.dataset.name}.`);
+    } catch (e) {
+      showStatus("Couldn't change sharing right now.");
+    }
+    loadSharing();
+  }));
+}
+
+async function addShare() {
+  const email = document.getElementById('share-email').value.trim();
+  if (!email) { showStatus('Enter their email address.'); return; }
+  const btn = document.getElementById('share-add');
+  btn.disabled = true;
+  let message;
+  try {
+    const res = await postAction('addPlanShare', { email });
+    message = res.ok ? `Your plans are now shared with ${email}.`
+      : res.reason === 'self' ? "That's your own email."
+      : `No Life Tempo user found with ${email}. They need a Life Tempo account (ask for access in My Apps Hub) using that email.`;
+  } catch (e) {
+    message = "Couldn't share right now.";
+  }
+  // Redraw first so the message never lands on a form that's about to be replaced.
+  await loadSharing();
+  showStatus(message);
+}
+
 async function reloadAll() {
   const [catRes, locRes, actRes, goalRes, personRes, tagRes, lpRes, seasonRes, clientRes, prefs] = await Promise.all([
     fetchData('categories'), fetchData('locations'), fetchData('activities'), fetchData('goals'),
@@ -683,6 +750,7 @@ async function reloadAll() {
   PREFS = prefs;
   applyNavVisibility(PREFS);
   render();
+  loadSharing();
 }
 
 (async () => {

@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Today | Life Tempo</title>
-<link rel="stylesheet" href="style.css?v=20261002c">
+<link rel="stylesheet" href="style.css?v=20261104">
 </head>
 <body>
 
@@ -31,7 +31,7 @@
 
 <footer class="site-footer">Life Tempo — Phase 7: Travel, Contract Work, and CSV Export</footer>
 
-<script src="js/api.js?v=20261002c"></script>
+<script src="js/api.js?v=20261104"></script>
 <script>
 const statusEl = document.getElementById('status');
 const contentEl = document.getElementById('content');
@@ -43,6 +43,7 @@ let TAGS = [];
 let LEARNING_PROJECTS = [];
 let CLIENTS = [];
 let UPCOMING = [];
+let UPCOMING_COLORS = {};
 let editingId = null;
 // Activity ids whose grouped Today entries are expanded -- kept across the
 // re-render that follows an edit or delete so the list doesn't snap shut.
@@ -122,10 +123,10 @@ function renderShell(todayEntries) {
       <div class="card">
         <h3>Coming Up</h3>
         ${UPCOMING.slice(0, 3).map(ev => `
-          <div class="log-row">
+          <div class="log-row" style="${planRowStyle(ev, UPCOMING_COLORS)}">
             <div class="lr-main">
               <div class="lr-activity">${escapeHtml(ev.Title)}</div>
-              <div class="lr-meta">${escapeHtml(formatUpcomingWhen(ev.StartDateTime))}${ev.LocationName ? ' · ' + locationLinkHtml(ev.LocationName, ev.LocationAddress) : ''}</div>
+              <div class="lr-meta">${planOwnerTagHtml(ev, UPCOMING_COLORS)}${escapeHtml(formatUpcomingWhen(ev.StartDateTime))}${ev.LocationName ? ' · ' + locationLinkHtml(ev.LocationName, ev.LocationAddress) : ''}</div>
             </div>
           </div>`).join('')}
         <p><a href="plan.html">See all planned events →</a></p>
@@ -512,7 +513,7 @@ async function load() {
     const [actRes, locRes, dayRes, personRes, tagRes, lpRes, evRes, clientRes, prefs] = await Promise.all([
       fetchData('activities'), fetchData('locations'), fetchData('dayStatus'),
       fetchData('people'), fetchData('tags'), fetchData('learningProjects'),
-      fetchData('plannedEvents', { status: 'Planned' }), fetchData('clients'), loadPreferences(),
+      fetchData('plannedEvents', { status: 'Planned', shared: 1 }), fetchData('clients'), loadPreferences(),
     ]);
     ACTIVITIES = (actRes && actRes.activities) || [];
     LOCATIONS = (locRes && locRes.locations) || [];
@@ -524,6 +525,7 @@ async function load() {
     PREFS = prefs;
     applyNavVisibility(PREFS);
     UPCOMING = ((evRes && evRes.events) || []).filter(e => e.StartDateTime >= nowDateTimeStr());
+    UPCOMING_COLORS = planColorMap(UPCOMING);
     await loadToday();
   } catch (e) {
     handleError(contentEl, e);

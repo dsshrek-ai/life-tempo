@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Plan | Life Tempo</title>
-<link rel="stylesheet" href="style.css?v=20261002c">
+<link rel="stylesheet" href="style.css?v=20261104">
 </head>
 <body>
 
@@ -31,7 +31,7 @@
 
 <footer class="site-footer">Life Tempo — Phase 7: Travel, Contract Work, and CSV Export</footer>
 
-<script src="js/api.js?v=20261002c"></script>
+<script src="js/api.js?v=20261104"></script>
 <script>
 const statusEl = document.getElementById('status');
 const contentEl = document.getElementById('content');
@@ -39,6 +39,15 @@ const contentEl = document.getElementById('content');
 let ACTIVITIES = [];
 let LOCATIONS = [];
 let editingId = null;
+// Plans shared with you are mixed into Upcoming, one color per person.
+let EVENTS = [];
+let COLORS = {};
+const HIDDEN_KEY = 'ltPlanHiddenOwners';
+let hiddenOwners = new Set();
+try { hiddenOwners = new Set(JSON.parse(localStorage.getItem(HIDDEN_KEY) || '[]')); } catch (e) { /* show everyone */ }
+// While editing someone else's plan, the Activity/Location lists are theirs.
+let editingOwner = null;
+
 // Location dropdown choice that reveals name/address fields; the API saves
 // that place to Manage → Locations along with the event.
 const NEW_LOCATION = 'new';
@@ -57,6 +66,29 @@ function showStatus(msg) {
 
 function optionsHtml(items, valueKey, labelKey, selected) {
   return items.map(i => `<option value="${i[valueKey]}" ${String(i[valueKey]) === String(selected) ? 'selected' : ''}>${escapeHtml(i[labelKey])}</option>`).join('');
+}
+
+function activityOptionsHtml(activities) {
+  return `<option value="">(none)</option>${optionsHtml(activities.filter(a => a.Active), 'Id', 'Name')}`;
+}
+
+function locationOptionsHtml(locations) {
+  return `<option value="">(none)</option><option value="${NEW_LOCATION}">+ New place…</option>`
+    + optionsHtml(locations.filter(l => l.Active), 'Id', 'Name');
+}
+
+// Swap the form's Activity/Location lists to the plan owner's (null = mine).
+async function useListsOf(ownerId) {
+  let activities = ACTIVITIES;
+  let locations = LOCATIONS;
+  if (ownerId !== null) {
+    const res = await fetchData('planLookups', { ownerId });
+    activities = res.activities || [];
+    locations = res.locations || [];
+  }
+  editingOwner = ownerId;
+  document.getElementById('f-activity').innerHTML = activityOptionsHtml(activities);
+  document.getElementById('f-location').innerHTML = locationOptionsHtml(locations);
 }
 
 function formatEventWhen(ev) {
@@ -80,18 +112,11 @@ function render(events) {
         <div class="form-grid">
           <div>
             <label for="f-activity">Activity (optional)</label>
-            <select id="f-activity">
-              <option value="">(none)</option>
-              ${optionsHtml(ACTIVITIES.filter(a => a.Active), 'Id', 'Name')}
-            </select>
+            <select id="f-activity">${activityOptionsHtml(ACTIVITIES)}</select>
           </div>
           <div>
             <label for="f-location">Location (optional)</label>
-            <select id="f-location">
-              <option value="">(none)</option>
-              <option value="${NEW_LOCATION}">+ New place…</option>
-              ${optionsHtml(LOCATIONS.filter(l => l.Active), 'Id', 'Name')}
-            </select>
+            <select id="f-location">${locationOptionsHtml(LOCATIONS)}</select>
           </div>
         </div>
 
@@ -133,6 +158,7 @@ function render(events) {
 
     <div class="card">
       <h3>Upcoming</h3>
+      <div id="plan-key"></div>
       <div id="event-list"></div>
     </div>
 
@@ -173,21 +199,50 @@ function render(events) {
 }
 
 function renderEventList(events) {
+  EVENTS = events;
+  COLORS = planColorMap(events);
+  renderPlanKey();
   const list = document.getElementById('event-list');
   const planned = events.filter(e => e.Status === 'Planned');
   if (!planned.length) {
     list.innerHTML = '<p class="note">Nothing planned yet.</p>';
     return;
   }
+  const shown = planned.filter(e => !hiddenOwners.has(String(e.OwnerId)));
+  if (!shown.length) {
+    list.innerHTML = '<p class="note">Everyone is hidden. Tick a name above to show their plans.</p>';
+    return;
+  }
   list.innerHTML = '';
-  planned.forEach(ev => list.appendChild(eventRowEl(ev)));
+  shown.forEach(ev => list.appendChild(eventRowEl(ev)));
+}
+
+// "■ Me  ■ Elaine" with show/hide checkboxes -- only when someone shares with you.
+function renderPlanKey() {
+  const key = document.getElementById('plan-key');
+  const owners = [];
+  EVENTS.forEach(e => {
+    if (!owners.some(o => o.id === e.OwnerId)) owners.push({ id: e.OwnerId, mine: e.Mine !== false, name: e.Mine === false ? planOwnerFirstName(e) : 'Me' });
+  });
+  owners.sort((a, b) => (b.mine - a.mine) || a.name.localeCompare(b.name));
+  if (!owners.some(o => !o.mine)) { key.innerHTML = ''; return; }
+  key.className = 'plan-key';
+  key.innerHTML = owners.map(o => `<label><input type="checkbox" data-owner="${o.id}" ${hiddenOwners.has(String(o.id)) ? '' : 'checked'}>
+    <span class="swatch" style="background:${COLORS[o.id]}"></span>${escapeHtml(o.name)}</label>`).join('');
+  key.querySelectorAll('[data-owner]').forEach(cb => cb.addEventListener('change', () => {
+    if (cb.checked) hiddenOwners.delete(cb.dataset.owner); else hiddenOwners.add(cb.dataset.owner);
+    try { localStorage.setItem(HIDDEN_KEY, JSON.stringify([...hiddenOwners])); } catch (e) { /* not remembered */ }
+    renderEventList(EVENTS);
+  }));
 }
 
 function eventRowEl(ev) {
   const row = document.createElement('div');
   row.className = 'log-row';
+  row.style.cssText = planRowStyle(ev, COLORS);
+  const mine = ev.Mine !== false;
 
-  const metaBits = [formatEventWhen(ev)];
+  const metaBits = [planOwnerTagHtml(ev, COLORS) + formatEventWhen(ev)];
   if (ev.ActivityName) metaBits.push(escapeHtml(ev.ActivityName));
   if (ev.LocationName) metaBits.push(locationLinkHtml(ev.LocationName, ev.LocationAddress));
   metaBits.push(`<a href="${gcalUrl(ev)}" target="_blank" rel="noopener">Add to Google Calendar</a>`);
@@ -222,19 +277,38 @@ function eventRowEl(ev) {
   delBtn.className = 'btn secondary';
   delBtn.textContent = 'Delete';
   delBtn.addEventListener('click', () => deleteEvent(ev));
-  actions.appendChild(completeBtn);
-  actions.appendChild(editBtn);
-  actions.appendChild(cancelBtn);
-  actions.appendChild(delBtn);
+  if (mine) {
+    actions.appendChild(completeBtn);
+    actions.appendChild(editBtn);
+    actions.appendChild(cancelBtn);
+    actions.appendChild(delBtn);
+  } else {
+    // Someone else's plan: edit it, or copy it into your own plans.
+    // Completing/cancelling/deleting stays with its owner.
+    const copyBtn = document.createElement('button');
+    copyBtn.type = 'button';
+    copyBtn.className = 'btn accent';
+    copyBtn.textContent = 'Add to my plans';
+    copyBtn.addEventListener('click', () => copyEvent(ev, copyBtn));
+    actions.appendChild(copyBtn);
+    actions.appendChild(editBtn);
+  }
 
   row.appendChild(main);
   row.appendChild(actions);
   return row;
 }
 
-function startEdit(ev) {
+async function startEdit(ev) {
+  const mine = ev.Mine !== false;
+  try {
+    await useListsOf(mine ? null : ev.OwnerId);
+  } catch (e) {
+    showStatus(`Couldn't open ${planOwnerFirstName(ev)}'s plan for editing.`);
+    return;
+  }
   editingId = ev.Id;
-  document.getElementById('form-heading').textContent = 'Edit Planned Event';
+  document.getElementById('form-heading').textContent = mine ? 'Edit Planned Event' : `Edit ${planOwnerFirstName(ev)}'s Plan`;
   document.getElementById('f-id').value = ev.Id;
   document.getElementById('f-title').value = ev.Title;
   document.getElementById('f-activity').value = ev.ActivityId ?? '';
@@ -250,6 +324,7 @@ function startEdit(ev) {
 
 function resetForm() {
   editingId = null;
+  if (editingOwner !== null) useListsOf(null);
   document.getElementById('form-heading').textContent = 'Add a Planned Event';
   document.getElementById('event-form').reset();
   document.getElementById('f-id').value = '';
@@ -303,6 +378,18 @@ async function onSubmit(ev) {
   btn.disabled = false;
 }
 
+async function copyEvent(ev, btn) {
+  btn.disabled = true;
+  try {
+    await postAction('copyPlannedEvent', { id: ev.Id });
+    await load();
+    showStatus(`"${ev.Title}" added to your plans.`);
+  } catch (e) {
+    showStatus("Couldn't add that to your plans.");
+    btn.disabled = false;
+  }
+}
+
 async function completeEvent(ev) {
   try {
     const res = await postAction('completePlannedEvent', { id: ev.Id });
@@ -352,8 +439,9 @@ async function onApplyRange() {
 async function load() {
   try {
     const [actRes, locRes, evRes] = await Promise.all([
-      fetchData('activities'), fetchData('locations'), fetchData('plannedEvents', { status: 'Planned' }),
+      fetchData('activities'), fetchData('locations'), fetchData('plannedEvents', { status: 'Planned', shared: 1 }),
     ]);
+    editingOwner = null;
     ACTIVITIES = (actRes && actRes.activities) || [];
     LOCATIONS = (locRes && locRes.locations) || [];
     render((evRes && evRes.events) || []);

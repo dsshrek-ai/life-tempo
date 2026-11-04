@@ -264,3 +264,9 @@ footer.site-footer {
 @media (max-width: 480px) {
   html { font-size: 16px; }
 }
+
+/* Shared plans: owner name tag and the color key on Plan */
+.plan-owner { font-weight: 700; font-size: 0.85rem; white-space: nowrap; }
+.plan-key { display: flex; flex-wrap: wrap; gap: 0.9rem; margin: 0 0 0.6rem; font-size: 0.95rem; }
+.plan-key label { display: inline-flex; align-items: center; gap: 0.35rem; margin: 0; font-weight: 600; cursor: pointer; }
+.plan-key .swatch { width: 0.9rem; height: 0.9rem; border-radius: 3px; display: inline-block; }

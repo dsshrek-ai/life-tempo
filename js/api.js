@@ -391,3 +391,32 @@ function groupByDate(entries) {
   }
   return groups;
 }
+
+// ---- Shared plans: one color per person (Plan and Today) ----
+// Your own plans use the app color; each person who shares theirs with you
+// gets the next color here, in a stable order (by user id).
+const PLAN_MY_COLOR = '#7a2048';
+const PLAN_OTHER_COLORS = ['#0f766e', '#b45309', '#1d4ed8', '#6d28d9', '#be123c'];
+
+function planColorMap(events) {
+  const map = {};
+  const others = [...new Set(events.filter(e => e.Mine === false).map(e => e.OwnerId))].sort((a, b) => a - b);
+  others.forEach((id, i) => { map[id] = PLAN_OTHER_COLORS[i % PLAN_OTHER_COLORS.length]; });
+  events.filter(e => e.Mine !== false).forEach(e => { map[e.OwnerId] = PLAN_MY_COLOR; });
+  return map;
+}
+
+// "Elaine Senior" -> "Elaine"
+function planOwnerFirstName(ev) {
+  return String(ev.OwnerName || '').trim().split(/\s+/)[0] || 'Shared';
+}
+
+function planRowStyle(ev, colors) {
+  return `border-left: 5px solid ${colors[ev.OwnerId] || PLAN_MY_COLOR}; padding-left: 0.6rem;`;
+}
+
+// A colored name tag for someone else's plan; nothing for your own.
+function planOwnerTagHtml(ev, colors) {
+  if (ev.Mine !== false) return '';
+  return `<span class="plan-owner" style="color:${colors[ev.OwnerId]}">● ${escapeHtml(planOwnerFirstName(ev))}</span> `;
+}

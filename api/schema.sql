@@ -474,3 +474,18 @@ ALTER TABLE lt_clients
 --     "Calculate from rate" next to Cost on the Today/History log form to
 --     fill it in from that entry's duration instead of typing it by hand.
 -- ============================================================
+
+-- ---------- PLAN SHARING (2026-11-04) ----------
+-- Run once. "Owner shares their planned events with viewer" -- set in
+-- Manage → Sharing by the viewer's email. The viewer sees and can edit the
+-- owner's plans (or copy one into their own); completing and deleting stay
+-- with the owner. Each person shares only their own plans.
+CREATE TABLE IF NOT EXISTS lt_plan_shares (
+  owner_user_id   INT NOT NULL,
+  viewer_user_id  INT NOT NULL,
+  created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (owner_user_id, viewer_user_id),
+  KEY ix_lt_plan_shares_viewer (viewer_user_id),
+  FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE,
+  FOREIGN KEY (viewer_user_id) REFERENCES users(id) ON DELETE CASCADE
+) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
