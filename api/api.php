@@ -1509,7 +1509,9 @@ function copyPlannedEvent(int $userId, int $eventId): int {
 
 // $includeShared adds the plans of everyone who shares theirs with $userId
 // (lt_plan_shares), each tagged with its owner so the page can color them.
-function listPlannedEvents(int $userId, ?string $status, bool $includeShared = false): array {
+// $from/$to (YYYY-MM-DD, inclusive) limit to plans starting in that range
+// (the calendar's visible days).
+function listPlannedEvents(int $userId, ?string $status, bool $includeShared = false, ?string $from = null, ?string $to = null): array {
   $owners = [$userId];
   if ($includeShared) {
     foreach (planOwnersSharedWith($userId) as $o) {
@@ -1519,11 +1521,12 @@ function listPlannedEvents(int $userId, ?string $status, bool $includeShared = f
   $sql = 'SELECT pe.id, pe.user_id, u.display_name AS owner_name, u.username AS owner_username,
                  pe.activity_id, a.name AS activity_name, pe.title, pe.start_datetime,
                  pe.end_datetime, pe.location_id, l.name AS location_name, l.address AS location_address,
-                 pe.status, pe.notes
+                 pe.status, pe.notes, pe.series_id, ps.freq, ps.interval_n, ps.weekdays, ps.month_mode
           FROM lt_planned_events pe
           JOIN users u ON u.id = pe.user_id
           LEFT JOIN lt_activities a ON a.id = pe.activity_id
           LEFT JOIN lt_locations l ON l.id = pe.location_id
+          LEFT JOIN lt_plan_series ps ON ps.id = pe.series_id
           WHERE pe.user_id IN (' . implode(',', array_fill(0, count($owners), '?')) . ')';
   $types = str_repeat('i', count($owners));
   $params = $owners;
@@ -1531,6 +1534,16 @@ function listPlannedEvents(int $userId, ?string $status, bool $includeShared = f
     $sql .= ' AND pe.status = ?';
     $types .= 's';
     $params[] = $status;
+  }
+  if ($from !== null && preg_match('/^\d{4}-\d{2}-\d{2}$/', $from)) {
+    $sql .= ' AND pe.start_datetime >= ?';
+    $types .= 's';
+    $params[] = $from . ' 00:00:00';
+  }
+  if ($to !== null && preg_match('/^\d{4}-\d{2}-\d{2}$/', $to)) {
+    $sql .= ' AND pe.start_datetime <= ?';
+    $types .= 's';
+    $params[] = $to . ' 23:59:59';
   }
   $sql .= ' ORDER BY pe.start_datetime ASC';
   $stmt = db()->prepare($sql);
@@ -1554,6 +1567,11 @@ function listPlannedEvents(int $userId, ?string $status, bool $includeShared = f
       'LocationAddress' => (string)($r['location_address'] ?? ''),
       'Status' => (string)$r['status'],
       'Notes' => (string)($r['notes'] ?? ''),
+      'SeriesId' => $r['series_id'] !== null ? (int)$r['series_id'] : null,
+      'Repeat' => $r['freq'] !== null ? [
+        'Freq' => (string)$r['freq'], 'Interval' => (int)$r['interval_n'],
+        'Weekdays' => (string)($r['weekdays'] ?? ''), 'MonthMode' => (string)($r['month_mode'] ?? ''),
+      ] : null,
     ];
   }
   $stmt->close();
@@ -1604,35 +1622,210 @@ function addPlannedEvent(int $userId, array $b): int {
   return $id;
 }
 
-function updatePlannedEvent(int $userId, int $id, array $b): void {
+// ---- Recurring plans ----
+// A recurring plan is stored as one lt_planned_events row per occurrence,
+// all sharing a series_id (lt_plan_series keeps the rule, for display), so
+// completing, sharing and copying work on single occurrences as usual.
+// Editing/deleting/cancelling can apply to "this one" or "this and following".
+
+const PLAN_REPEAT_MAX = 200;      // occurrences per series
+const PLAN_REPEAT_MAX_YEARS = 3;
+
+// Dates (YYYY-MM-DD) from $startDate on that match the rule, start included
+// when it matches. $r: freq daily|weekly|monthly, interval >= 1, weekdays
+// (0=Sun..6=Sat, weekly), monthMode date|weekday (monthly), and an end:
+// until (YYYY-MM-DD) or count.
+function recurrenceDates(string $startDate, array $r): array {
+  $freq = (string)($r['freq'] ?? '');
+  if (!in_array($freq, ['daily', 'weekly', 'monthly'], true)) { fail('Pick how often it repeats'); }
+  $interval = max(1, min(99, (int)($r['interval'] ?? 1)));
+  $until = trim((string)($r['until'] ?? ''));
+  $count = (int)($r['count'] ?? 0);
+  if ($until === '' && $count <= 0) { fail('Choose when the repeat ends'); }
+  if ($until !== '' && (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $until) || $until < $startDate)) {
+    fail('The repeat end date must be on or after the first date');
+  }
+  $limitDate = (new DateTime($startDate))->modify('+' . PLAN_REPEAT_MAX_YEARS . ' years')->format('Y-m-d');
+  if ($until === '' || $until > $limitDate) { $until = $limitDate; }
+  $max = $count > 0 ? min($count, PLAN_REPEAT_MAX) : PLAN_REPEAT_MAX;
+
+  $start = new DateTime($startDate);
+  $dates = [];
+  $add = function (DateTime $d) use (&$dates, $until, $max, $startDate): bool {
+    $iso = $d->format('Y-m-d');
+    if ($iso > $until || count($dates) >= $max) { return false; }
+    if ($iso >= $startDate) { $dates[] = $iso; }
+    return true;
+  };
+
+  if ($freq === 'daily') {
+    for ($d = clone $start; $add($d); $d->modify("+$interval days")) {}
+  } elseif ($freq === 'weekly') {
+    $days = array_values(array_unique(array_filter(array_map('intval', (array)($r['weekdays'] ?? [])), fn($x) => $x >= 0 && $x <= 6)));
+    if (!$days) { $days = [(int)$start->format('w')]; }
+    sort($days);
+    $weekStart = (clone $start)->modify('-' . $start->format('w') . ' days'); // that week's Sunday
+    while (true) {
+      foreach ($days as $wd) {
+        if (!$add((clone $weekStart)->modify("+$wd days"))) { break 2; }
+      }
+      $weekStart->modify('+' . (7 * $interval) . ' days');
+    }
+  } else {
+    $byWeekday = ($r['monthMode'] ?? 'date') === 'weekday';
+    $dom = (int)$start->format('j');
+    $wd = (int)$start->format('w');
+    $nth = (int)ceil($dom / 7);                 // 1..5; 5 means "last"
+    for ($i = 0; ; $i += $interval) {
+      $month = (new DateTime($start->format('Y-m-01')))->modify("+$i months");
+      if ($month->format('Y-m-d') > $until || count($dates) >= $max) { break; }
+      if ($byWeekday) {
+        if ($nth >= 5) {
+          $d = (clone $month)->modify('last day of this month');
+          $d->modify('-' . ((((int)$d->format('w')) - $wd + 7) % 7) . ' days');
+        } else {
+          $d = clone $month;
+          $d->modify('+' . (($wd - (int)$d->format('w') + 7) % 7 + 7 * ($nth - 1)) . ' days');
+        }
+      } else {
+        if ($dom > (int)$month->format('t')) { continue; } // e.g. no 31st this month
+        $d = (clone $month)->modify('+' . ($dom - 1) . ' days');
+      }
+      if (!$add($d)) { break; }
+    }
+  }
+  return $dates;
+}
+
+// Creates a plan that repeats: one row per date from recurrenceDates().
+// Returns [first id, number created].
+function addPlannedSeries(int $userId, array $b, array $repeat): array {
   [$title, $activityId, $startDateTime, $endDateTime, $locationId, $notes] = plannedEventFields($userId, $b);
-  $pairs = [
-    ['i', $activityId], ['s', $title], ['s', $startDateTime], ['s', $endDateTime],
-    ['i', $locationId], ['s', $notes], ['i', $id], ['i', $userId],
-  ];
+  $dates = recurrenceDates(substr($startDateTime, 0, 10), $repeat);
+  if (!$dates) { fail('That repeat doesn\'t produce any dates'); }
+
+  $freq = (string)$repeat['freq'];
+  $interval = max(1, min(99, (int)($repeat['interval'] ?? 1)));
+  $weekdays = $freq === 'weekly' ? implode(',', array_map('intval', (array)($repeat['weekdays'] ?? []))) : null;
+  $monthMode = $freq === 'monthly' ? (($repeat['monthMode'] ?? 'date') === 'weekday' ? 'weekday' : 'date') : null;
+  $until = nullIfEmpty((string)($repeat['until'] ?? ''));
+  $count = (int)($repeat['count'] ?? 0) ?: null;
+  $stmt = db()->prepare(
+    'INSERT INTO lt_plan_series (user_id, freq, interval_n, weekdays, month_mode, until_date, occurrences)
+     VALUES (?, ?, ?, ?, ?, ?, ?)'
+  );
+  $stmt->bind_param('isisssi', $userId, $freq, $interval, $weekdays, $monthMode, $until, $count);
+  $stmt->execute();
+  $seriesId = $stmt->insert_id;
+  $stmt->close();
+
+  $time = substr($startDateTime, 11);
+  $length = $endDateTime !== null ? strtotime($endDateTime) - strtotime($startDateTime) : null;
+  $stmt = db()->prepare(
+    'INSERT INTO lt_planned_events (user_id, activity_id, title, start_datetime, end_datetime, location_id, notes, series_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+  );
+  $firstId = null;
+  foreach ($dates as $date) {
+    $start = "$date $time";
+    $end = $length !== null ? date('Y-m-d H:i:s', strtotime($start) + $length) : null;
+    $stmt->bind_param('iisssisi', $userId, $activityId, $title, $start, $end, $locationId, $notes, $seriesId);
+    $stmt->execute();
+    $firstId = $firstId ?? $stmt->insert_id;
+  }
+  $stmt->close();
+  return [$firstId, count($dates)];
+}
+
+function plannedEventRow(int $userId, int $id): array {
+  $stmt = db()->prepare('SELECT id, start_datetime, series_id FROM lt_planned_events WHERE id = ? AND user_id = ?');
+  $stmt->bind_param('ii', $id, $userId);
+  $stmt->execute();
+  $row = $stmt->get_result()->fetch_assoc();
+  $stmt->close();
+  if (!$row) { fail('Planned event not found', 404); }
+  return $row;
+}
+
+// Later still-Planned occurrences in the same series as $row.
+function followingInSeries(int $userId, array $row): array {
+  if ($row['series_id'] === null) { return []; }
+  $stmt = db()->prepare(
+    "SELECT id, start_datetime, end_datetime FROM lt_planned_events
+     WHERE user_id = ? AND series_id = ? AND start_datetime > ? AND status = 'Planned' AND id <> ?"
+  );
+  $seriesId = (int)$row['series_id'];
+  $rowId = (int)$row['id'];
+  $stmt->bind_param('iisi', $userId, $seriesId, $row['start_datetime'], $rowId);
+  $stmt->execute();
+  $rows = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+  $stmt->close();
+  return $rows;
+}
+
+// $scope 'following' also applies the change to later Planned occurrences in
+// the series: same title/activity/location/notes/time of day, and a date
+// change shifts each of them by the same number of days.
+function updatePlannedEvent(int $userId, int $id, array $b, string $scope = 'one'): int {
+  $old = plannedEventRow($userId, $id);
+  // Collected before saving: once this one moves, it must not count as "following".
+  $following = $scope === 'following' ? followingInSeries($userId, $old) : [];
+  [$title, $activityId, $startDateTime, $endDateTime, $locationId, $notes] = plannedEventFields($userId, $b);
   $stmt = db()->prepare(
     'UPDATE lt_planned_events
      SET activity_id = ?, title = ?, start_datetime = ?, end_datetime = ?, location_id = ?, notes = ?
      WHERE id = ? AND user_id = ?'
   );
-  $stmt->bind_param(implode('', array_column($pairs, 0)), ...array_column($pairs, 1));
-  $stmt->execute();
+  $apply = function (int $rowId, string $start, ?string $end) use ($stmt, $activityId, $title, $locationId, $notes, $userId) {
+    $stmt->bind_param('isssisii', $activityId, $title, $start, $end, $locationId, $notes, $rowId, $userId);
+    $stmt->execute();
+  };
+  $apply($id, $startDateTime, $endDateTime);
+  $changed = 1;
+  if ($scope === 'following') {
+    $shiftDays = (int)round((strtotime(substr($startDateTime, 0, 10)) - strtotime(substr($old['start_datetime'], 0, 10))) / 86400);
+    $time = substr($startDateTime, 11);
+    $length = $endDateTime !== null ? strtotime($endDateTime) - strtotime($startDateTime) : null;
+    foreach ($following as $row) {
+      $date = date('Y-m-d', strtotime(substr($row['start_datetime'], 0, 10) . " $shiftDays days"));
+      $start = "$date $time";
+      $end = $length !== null ? date('Y-m-d H:i:s', strtotime($start) + $length) : null;
+      $apply((int)$row['id'], $start, $end);
+      $changed++;
+    }
+  }
   $stmt->close();
+  return $changed;
 }
 
-function setPlannedEventStatus(int $userId, int $id, string $status): void {
+function setPlannedEventStatus(int $userId, int $id, string $status, string $scope = 'one'): int {
   $status = normEnum($status, PLANNED_EVENT_STATUSES, 'Planned');
+  $ids = [$id];
+  if ($scope === 'following') {
+    $ids = array_merge($ids, array_map(fn($r) => (int)$r['id'], followingInSeries($userId, plannedEventRow($userId, $id))));
+  }
   $stmt = db()->prepare('UPDATE lt_planned_events SET status = ? WHERE id = ? AND user_id = ?');
-  $stmt->bind_param('sii', $status, $id, $userId);
-  $stmt->execute();
+  foreach ($ids as $rowId) {
+    $stmt->bind_param('sii', $status, $rowId, $userId);
+    $stmt->execute();
+  }
   $stmt->close();
+  return count($ids);
 }
 
-function deletePlannedEvent(int $userId, int $id): void {
+function deletePlannedEvent(int $userId, int $id, string $scope = 'one'): int {
+  $row = plannedEventRow($userId, $id);
+  $ids = [$id];
+  if ($scope === 'following') {
+    $ids = array_merge($ids, array_map(fn($r) => (int)$r['id'], followingInSeries($userId, $row)));
+  }
   $stmt = db()->prepare('DELETE FROM lt_planned_events WHERE id = ? AND user_id = ?');
-  $stmt->bind_param('ii', $id, $userId);
-  $stmt->execute();
+  foreach ($ids as $rowId) {
+    $stmt->bind_param('ii', $rowId, $userId);
+    $stmt->execute();
+  }
   $stmt->close();
+  return count($ids);
 }
 
 // Marks a planned event Completed and, if it has an activity, creates the
@@ -2374,7 +2567,9 @@ switch ($action) {
     $user = requireMember();
     $status = isset($_GET['status']) && $_GET['status'] !== '' ? (string)$_GET['status'] : null;
     $shared = !empty($_GET['shared']);
-    respond(['ok' => true, 'events' => listPlannedEvents((int)$user['id'], $status, $shared)]);
+    $from = isset($_GET['from']) && $_GET['from'] !== '' ? (string)$_GET['from'] : null;
+    $to = isset($_GET['to']) && $_GET['to'] !== '' ? (string)$_GET['to'] : null;
+    respond(['ok' => true, 'events' => listPlannedEvents((int)$user['id'], $status, $shared, $from, $to)]);
   }
 
   case 'planShares': {
@@ -2416,8 +2611,13 @@ switch ($action) {
 
   case 'addPlannedEvent': {
     $user = requireMember();
+    // repeat: {freq, interval, weekdays, monthMode, until | count} makes a series.
+    if (is_array($body['repeat'] ?? null) && ($body['repeat']['freq'] ?? '') !== '') {
+      [$id, $count] = addPlannedSeries((int)$user['id'], $body, $body['repeat']);
+      respond(['ok' => true, 'id' => $id, 'count' => $count]);
+    }
     $id = addPlannedEvent((int)$user['id'], $body);
-    respond(['ok' => true, 'id' => $id]);
+    respond(['ok' => true, 'id' => $id, 'count' => 1]);
   }
 
   case 'updatePlannedEvent': {
@@ -2426,16 +2626,16 @@ switch ($action) {
     if ($id <= 0) { fail('Missing event id'); }
     // Editing someone else's plan (shared with the caller) saves it as theirs:
     // activity/location are checked against, and a new place added to, the owner.
-    updatePlannedEvent(editablePlanOwner((int)$user['id'], $id), $id, $body);
-    respond(['ok' => true]);
+    $count = updatePlannedEvent(editablePlanOwner((int)$user['id'], $id), $id, $body, (string)($body['scope'] ?? 'one'));
+    respond(['ok' => true, 'count' => $count]);
   }
 
   case 'setPlannedEventStatus': {
     $user = requireMember();
     $id = (int)($body['id'] ?? 0);
     if ($id <= 0) { fail('Missing event id'); }
-    setPlannedEventStatus((int)$user['id'], $id, (string)($body['status'] ?? 'Planned'));
-    respond(['ok' => true]);
+    $count = setPlannedEventStatus((int)$user['id'], $id, (string)($body['status'] ?? 'Planned'), (string)($body['scope'] ?? 'one'));
+    respond(['ok' => true, 'count' => $count]);
   }
 
   case 'completePlannedEvent': {
@@ -2450,8 +2650,8 @@ switch ($action) {
     $user = requireMember();
     $id = (int)($body['id'] ?? 0);
     if ($id <= 0) { fail('Missing event id'); }
-    deletePlannedEvent((int)$user['id'], $id);
-    respond(['ok' => true]);
+    $count = deletePlannedEvent((int)$user['id'], $id, (string)($body['scope'] ?? 'one'));
+    respond(['ok' => true, 'count' => $count]);
   }
 
   // -- Phase 7: Clients --

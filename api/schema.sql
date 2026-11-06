@@ -489,3 +489,26 @@ CREATE TABLE IF NOT EXISTS lt_plan_shares (
   FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE,
   FOREIGN KEY (viewer_user_id) REFERENCES users(id) ON DELETE CASCADE
 ) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ---------- RECURRING PLANS (2026-11-06) ----------
+-- Run once. A recurring plan is one lt_planned_events row per occurrence,
+-- linked by series_id; lt_plan_series keeps the rule so the page can say
+-- "Repeats weekly on Mon, Wed". Edit/cancel/delete can apply to one
+-- occurrence or "this and following".
+CREATE TABLE IF NOT EXISTS lt_plan_series (
+  id           INT AUTO_INCREMENT PRIMARY KEY,
+  user_id      INT NOT NULL,
+  freq         VARCHAR(10) NOT NULL,        -- daily | weekly | monthly
+  interval_n   INT NOT NULL DEFAULT 1,      -- every N days/weeks/months
+  weekdays     VARCHAR(20) NULL,            -- weekly: "1,3" (0=Sun .. 6=Sat)
+  month_mode   VARCHAR(10) NULL,            -- monthly: date | weekday
+  until_date   DATE NULL,
+  occurrences  INT NULL,
+  created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+ALTER TABLE lt_planned_events
+  ADD COLUMN series_id INT NULL AFTER notes,
+  ADD KEY ix_lt_planned_events_series (series_id, start_datetime),
+  ADD FOREIGN KEY (series_id) REFERENCES lt_plan_series(id) ON DELETE SET NULL;

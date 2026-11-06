@@ -5,6 +5,44 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Plan | Life Tempo</title>
 <link rel="stylesheet" href="style.css?v=20261104">
+<style>
+  /* Repeat options */
+  .repeat-box { border: 1px solid var(--border); border-radius: var(--radius); padding: 0.6rem 0.8rem; margin: 0.4rem 0 0.8rem; }
+  .repeat-line { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin: 0.35rem 0; }
+  .repeat-line label { display: inline-flex; align-items: center; gap: 0.3rem; margin: 0; font-weight: normal; }
+  .repeat-line input[type=number] { width: 4.5rem; }
+  .repeat-line input[type=date] { width: auto; }
+  .weekday-picks label { min-width: 2.6rem; justify-content: center; border: 1px solid var(--border); border-radius: 6px; padding: 0.2rem 0.3rem; }
+  .repeat-tag { white-space: nowrap; }
+  /* List | Calendar switch and calendar */
+  .view-tabs { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 0.6rem; }
+  .view-tabs .btn.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+  .cal-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; margin-bottom: 0.6rem; }
+  .cal-title { font-weight: 700; flex: 1; min-width: 9rem; }
+  .cal-month { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); border-top: 1px solid var(--border); border-left: 1px solid var(--border); }
+  .cal-month .cal-dow { font-size: 0.75rem; font-weight: 700; text-align: center; padding: 0.2rem 0; border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); background: var(--tint); }
+  .cal-cell { min-height: 5.2rem; border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: 0.15rem; overflow: hidden; }
+  .cal-cell.other { background: var(--tint); opacity: 0.65; }
+  .cal-cell.today .cal-daynum { background: var(--primary); color: #fff; }
+  .cal-daynum { font: inherit; font-size: 0.8rem; font-weight: 700; border: none; background: none; cursor: pointer; border-radius: 999px; padding: 0 0.35rem; }
+  .cal-chip { display: block; width: 100%; text-align: left; font: inherit; font-size: 0.72rem; line-height: 1.25; color: #fff; border: none;
+    border-radius: 4px; padding: 0.1rem 0.25rem; margin-top: 0.15rem; cursor: pointer; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .cal-month .cal-chip { white-space: normal; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; font-size: 0.68rem; }
+  .cal-chip.done { opacity: 0.5; text-decoration: line-through; }
+  .cal-more { font: inherit; font-size: 0.72rem; border: none; background: none; color: var(--primary-dark); cursor: pointer; padding: 0.1rem 0.2rem; }
+  .cal-days { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0.6rem; }
+  .cal-day { border: 1px solid var(--border); border-radius: var(--radius); padding: 0.4rem; min-height: 6rem; }
+  .cal-day.today { border-color: var(--primary); border-width: 2px; }
+  .cal-day-head { display: flex; justify-content: space-between; align-items: center; font-weight: 700; margin-bottom: 0.3rem; }
+  .cal-day .cal-chip { white-space: normal; font-size: 0.85rem; padding: 0.3rem 0.4rem; }
+  .cal-add { font: inherit; font-size: 0.8rem; border: 1px solid var(--border); background: var(--surface); border-radius: 6px; cursor: pointer; padding: 0.05rem 0.4rem; }
+  #cal-selected:empty { display: none; }
+  #cal-selected { margin-top: 0.8rem; }
+  /* "Only this one / This and following" chooser */
+  .choice-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.45); display: flex; align-items: center; justify-content: center; z-index: 100; padding: 1rem; }
+  .choice-backdrop .card { max-width: 420px; width: 100%; }
+  .choice-backdrop .btn { display: block; width: 100%; margin: 0.4rem 0; }
+</style>
 </head>
 <body>
 
@@ -47,6 +85,19 @@ let hiddenOwners = new Set();
 try { hiddenOwners = new Set(JSON.parse(localStorage.getItem(HIDDEN_KEY) || '[]')); } catch (e) { /* show everyone */ }
 // While editing someone else's plan, the Activity/Location lists are theirs.
 let editingOwner = null;
+let editingEvent = null;
+// Upcoming shows as a list or a calendar (remembered on this device).
+const VIEW_KEY = 'ltPlanView';
+const CAL_MODE_KEY = 'ltPlanCalMode';
+let planView = 'list';
+let calMode = 'month';       // month | 4day | day
+let calAnchor = todayStr();  // a date inside the period shown
+try {
+  planView = localStorage.getItem(VIEW_KEY) === 'calendar' ? 'calendar' : 'list';
+  calMode = ['month', '4day', 'day'].includes(localStorage.getItem(CAL_MODE_KEY)) ? localStorage.getItem(CAL_MODE_KEY) : 'month';
+} catch (e) { /* defaults */ }
+const WEEKDAY_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const ORDINALS = ['', '1st', '2nd', '3rd', '4th', 'last'];
 
 // Location dropdown choice that reveals name/address fields; the API saves
 // that place to Manage → Locations along with the event.
@@ -146,6 +197,38 @@ function render(events) {
           </div>
         </div>
 
+        <div id="f-repeat-area">
+          <label for="f-repeat">Repeat</label>
+          <select id="f-repeat">
+            <option value="">Does not repeat</option>
+            <option value="daily">Daily</option>
+            <option value="weekly">Weekly</option>
+            <option value="monthly">Monthly</option>
+          </select>
+          <div id="f-repeat-opts" class="repeat-box" style="display:none;">
+            <div class="repeat-line">Every <input type="number" id="f-interval" min="1" max="99" value="1"> <span id="f-interval-unit">weeks</span></div>
+            <div class="repeat-line weekday-picks" id="f-weekdays">
+              ${WEEKDAY_SHORT.map((d, i) => `<label><input type="checkbox" value="${i}"> ${d.slice(0, 2)}</label>`).join('')}
+            </div>
+            <div class="repeat-line" id="f-monthmode">
+              <label><input type="radio" name="f-monthmode" value="date" checked> <span id="mm-date"></span></label>
+              <label><input type="radio" name="f-monthmode" value="weekday"> <span id="mm-weekday"></span></label>
+            </div>
+            <div class="repeat-line">Ends
+              <label><input type="radio" name="f-end" value="until" checked> on <input type="date" id="f-until"></label>
+              <label><input type="radio" name="f-end" value="count"> after <input type="number" id="f-count" min="1" max="200" value="10"> times</label>
+            </div>
+          </div>
+        </div>
+
+        <div id="f-scope-area" class="repeat-box" style="display:none;">
+          <p class="note" style="margin-top:0;">This plan repeats (<span id="f-repeat-text"></span>).</p>
+          <div class="repeat-line">Save changes to
+            <label><input type="radio" name="f-scope" value="one" checked> this plan only</label>
+            <label><input type="radio" name="f-scope" value="following"> this and the following plans</label>
+          </div>
+        </div>
+
         <label for="f-notes">Notes</label>
         <textarea id="f-notes"></textarea>
 
@@ -158,8 +241,13 @@ function render(events) {
 
     <div class="card">
       <h3>Upcoming</h3>
+      <div class="view-tabs">
+        <button type="button" class="btn secondary" data-view="list">List</button>
+        <button type="button" class="btn secondary" data-view="calendar">Calendar</button>
+      </div>
       <div id="plan-key"></div>
       <div id="event-list"></div>
+      <div id="calendar-area"></div>
     </div>
 
     <div class="card">
@@ -194,8 +282,249 @@ function render(events) {
   document.getElementById('f-cancel').addEventListener('click', resetForm);
   document.getElementById('f-location').addEventListener('change', toggleNewLocation);
   document.getElementById('range-apply').addEventListener('click', onApplyRange);
+  document.getElementById('f-repeat').addEventListener('change', () => { syncRepeatOptions(true); });
+  document.getElementById('f-date').addEventListener('change', () => syncRepeatOptions(false));
+  contentEl.querySelectorAll('[data-view]').forEach(b => b.addEventListener('click', () => setPlanView(b.dataset.view)));
 
   renderEventList(events);
+  syncRepeatOptions(false);
+  setPlanView(planView);
+}
+
+// ---------------- repeat options ----------------
+
+function dateParts(iso) {
+  const [y, m, d] = iso.split('-').map(Number);
+  return new Date(y, m - 1, d);
+}
+
+function isoOf(date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+function addDays(iso, n) {
+  const d = dateParts(iso);
+  d.setDate(d.getDate() + n);
+  return isoOf(d);
+}
+
+// Shows the options for the chosen repeat and labels them from the start date.
+// startedNow: the repeat was just switched on, so seed sensible defaults.
+function syncRepeatOptions(startedNow) {
+  const freq = document.getElementById('f-repeat').value;
+  const date = document.getElementById('f-date').value || todayStr();
+  const start = dateParts(date);
+  document.getElementById('f-repeat-opts').style.display = freq ? '' : 'none';
+  document.getElementById('f-interval-unit').textContent = { daily: 'days', weekly: 'weeks', monthly: 'months' }[freq] || '';
+  document.getElementById('f-weekdays').style.display = freq === 'weekly' ? '' : 'none';
+  document.getElementById('f-monthmode').style.display = freq === 'monthly' ? '' : 'none';
+  const nth = Math.ceil(start.getDate() / 7);
+  document.getElementById('mm-date').textContent = `on day ${start.getDate()}`;
+  document.getElementById('mm-weekday').textContent = `on the ${ORDINALS[Math.min(nth, 5)]} ${WEEKDAY_SHORT[start.getDay()]}`;
+  const boxes = [...document.querySelectorAll('#f-weekdays input')];
+  if (freq === 'weekly' && !boxes.some(b => b.checked)) boxes[start.getDay()].checked = true;
+  const until = document.getElementById('f-until');
+  if (startedNow || !until.value || until.value < date) {
+    const d = dateParts(date);
+    d.setMonth(d.getMonth() + 3);
+    until.value = isoOf(d);
+  }
+}
+
+function repeatPayload() {
+  const freq = document.getElementById('f-repeat').value;
+  if (!freq) return null;
+  const byCount = document.querySelector('input[name="f-end"]:checked').value === 'count';
+  return {
+    freq,
+    interval: Number(document.getElementById('f-interval').value) || 1,
+    weekdays: [...document.querySelectorAll('#f-weekdays input:checked')].map(b => Number(b.value)),
+    monthMode: document.querySelector('input[name="f-monthmode"]:checked').value,
+    until: byCount ? '' : document.getElementById('f-until').value,
+    count: byCount ? Number(document.getElementById('f-count').value) || 0 : 0,
+  };
+}
+
+// "weekly on Mon, Wed" / "every 2 weeks on Tue" / "monthly on the 2nd Tue"
+function repeatText(ev) {
+  const r = ev.Repeat;
+  if (!r) return '';
+  const unit = { daily: 'day', weekly: 'week', monthly: 'month' }[r.Freq];
+  let text = r.Interval > 1 ? `every ${r.Interval} ${unit}s` : { daily: 'daily', weekly: 'weekly', monthly: 'monthly' }[r.Freq];
+  if (r.Freq === 'weekly' && r.Weekdays) text += ' on ' + r.Weekdays.split(',').map(i => WEEKDAY_SHORT[Number(i)]).join(', ');
+  if (r.Freq === 'monthly') {
+    const start = dateParts(ev.StartDateTime.slice(0, 10));
+    text += r.MonthMode === 'weekday'
+      ? ` on the ${ORDINALS[Math.min(Math.ceil(start.getDate() / 7), 5)]} ${WEEKDAY_SHORT[start.getDay()]}`
+      : ` on day ${start.getDate()}`;
+  }
+  return text;
+}
+
+// "Only this one" / "This and following" for a recurring plan; null = never mind.
+function askScope(question) {
+  return new Promise(resolve => {
+    const wrap = document.createElement('div');
+    wrap.className = 'choice-backdrop';
+    wrap.innerHTML = `<div class="card" role="dialog" aria-modal="true">
+      <h3>${escapeHtml(question)}</h3>
+      <button type="button" class="btn" data-scope="one">Only this one</button>
+      <button type="button" class="btn" data-scope="following">This and the following ones</button>
+      <button type="button" class="btn secondary" data-scope="">Never mind</button>
+    </div>`;
+    document.body.appendChild(wrap);
+    wrap.addEventListener('click', e => {
+      const b = e.target.closest('[data-scope]');
+      if (!b && e.target !== wrap) return;
+      wrap.remove();
+      resolve(b ? (b.dataset.scope || null) : null);
+    });
+  });
+}
+
+// ---------------- list / calendar ----------------
+
+function setPlanView(view) {
+  planView = view === 'calendar' ? 'calendar' : 'list';
+  try { localStorage.setItem(VIEW_KEY, planView); } catch (e) { /* not remembered */ }
+  contentEl.querySelectorAll('[data-view]').forEach(b => b.classList.toggle('active', b.dataset.view === planView));
+  document.getElementById('event-list').style.display = planView === 'list' ? '' : 'none';
+  document.getElementById('calendar-area').style.display = planView === 'calendar' ? '' : 'none';
+  if (planView === 'calendar') renderCalendar();
+}
+
+function setCalMode(mode) {
+  calMode = mode;
+  try { localStorage.setItem(CAL_MODE_KEY, calMode); } catch (e) { /* not remembered */ }
+}
+
+// First and last day shown for the current mode and anchor.
+function calRange() {
+  if (calMode === 'day') return [calAnchor, calAnchor];
+  if (calMode === '4day') return [calAnchor, addDays(calAnchor, 3)];
+  const first = dateParts(calAnchor.slice(0, 8) + '01');
+  const gridStart = addDays(isoOf(first), -first.getDay());
+  const last = new Date(first.getFullYear(), first.getMonth() + 1, 0);
+  const gridEnd = addDays(isoOf(last), 6 - last.getDay());
+  return [gridStart, gridEnd];
+}
+
+function calTitle() {
+  const fmt = (iso, opts) => dateParts(iso).toLocaleDateString(undefined, opts);
+  if (calMode === 'month') return fmt(calAnchor, { month: 'long', year: 'numeric' });
+  if (calMode === 'day') return fmt(calAnchor, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+  return `${fmt(calAnchor, { month: 'short', day: 'numeric' })} – ${fmt(addDays(calAnchor, 3), { month: 'short', day: 'numeric', year: 'numeric' })}`;
+}
+
+function calMove(dir) {
+  if (dir === 0) { calAnchor = todayStr(); return; }
+  if (calMode === 'month') {
+    const d = dateParts(calAnchor.slice(0, 8) + '01');
+    d.setMonth(d.getMonth() + dir);
+    calAnchor = isoOf(d);
+  } else {
+    calAnchor = addDays(calAnchor, dir * (calMode === '4day' ? 4 : 1));
+  }
+}
+
+let calRequest = 0;
+async function renderCalendar() {
+  const area = document.getElementById('calendar-area');
+  if (!area) return;
+  const [from, to] = calRange();
+  const modeBtn = (m, label) => `<button type="button" class="btn secondary${calMode === m ? ' active' : ''}" data-cal-mode="${m}">${label}</button>`;
+  area.innerHTML = `
+    <div class="cal-toolbar">
+      <button type="button" class="btn secondary" data-cal-move="-1" aria-label="Previous">◀</button>
+      <button type="button" class="btn secondary" data-cal-move="0">Today</button>
+      <button type="button" class="btn secondary" data-cal-move="1" aria-label="Next">▶</button>
+      <span class="cal-title">${escapeHtml(calTitle())}</span>
+    </div>
+    <div class="view-tabs">${modeBtn('month', 'Month')}${modeBtn('4day', '4 Days')}${modeBtn('day', 'Day')}</div>
+    <div id="cal-body"><p class="note">Loading…</p></div>
+    <div id="cal-selected"></div>`;
+  area.querySelectorAll('[data-cal-move]').forEach(b => b.addEventListener('click', () => { calMove(Number(b.dataset.calMove)); renderCalendar(); }));
+  area.querySelectorAll('[data-cal-mode]').forEach(b => b.addEventListener('click', () => {
+    // Leaving Month for the month that holds today: start from today, not the 1st.
+    if (calMode === 'month' && b.dataset.calMode !== 'month' && todayStr().slice(0, 7) === calAnchor.slice(0, 7)) {
+      calAnchor = todayStr();
+    }
+    setCalMode(b.dataset.calMode);
+    renderCalendar();
+  }));
+
+  const request = ++calRequest;
+  let events;
+  try {
+    const res = await fetchData('plannedEvents', { shared: 1, from, to });
+    events = (res && res.events) || [];
+  } catch (e) {
+    if (request === calRequest) document.getElementById('cal-body').innerHTML = '<p class="note">Couldn\u2019t load the calendar right now.</p>';
+    return;
+  }
+  if (request !== calRequest) return; // a newer view was asked for meanwhile
+  const colors = { ...COLORS, ...planColorMap(events) };
+  const shown = events.filter(e => e.Status !== 'Cancelled' && !hiddenOwners.has(String(e.OwnerId)));
+  const byDay = {};
+  shown.forEach(e => { (byDay[e.StartDateTime.slice(0, 10)] = byDay[e.StartDateTime.slice(0, 10)] || []).push(e); });
+  const today = todayStr();
+  // Month cells are narrow on a phone: "6:30p Choir practice", wrapping to two lines.
+  const shortTime = dt => formatTime12h(dt).replace(':00', '').replace(/\s*([AP])M$/i, (m, ap) => ap.toLowerCase());
+  const chip = (e, long) => {
+    const time = long
+      ? formatTime12h(e.StartDateTime) + (e.EndDateTime ? '–' + formatTime12h(e.EndDateTime) : '')
+      : shortTime(e.StartDateTime);
+    const who = e.Mine === false ? `${planOwnerFirstName(e)}: ` : '';
+    const where = long && e.LocationName ? ` · ${e.LocationName}` : '';
+    return `<button type="button" class="cal-chip${e.Status === 'Completed' ? ' done' : ''}" data-ev="${e.Id}"
+      style="background:${colors[e.OwnerId] || PLAN_MY_COLOR}" title="${escapeHtml(`${time} ${who}${e.Title}`)}">${escapeHtml(`${time} ${who}${e.Title}${where}`)}</button>`;
+  };
+
+  const body = document.getElementById('cal-body');
+  if (calMode === 'month') {
+    const month = calAnchor.slice(0, 7);
+    let html = WEEKDAY_SHORT.map(d => `<div class="cal-dow">${d}</div>`).join('');
+    for (let day = from; day <= to; day = addDays(day, 1)) {
+      const list = byDay[day] || [];
+      html += `<div class="cal-cell${day.slice(0, 7) !== month ? ' other' : ''}${day === today ? ' today' : ''}">
+        <button type="button" class="cal-daynum" data-open-day="${day}" title="Open this day">${Number(day.slice(8))}</button>
+        ${list.slice(0, 3).map(e => chip(e, false)).join('')}
+        ${list.length > 3 ? `<button type="button" class="cal-more" data-open-day="${day}">+${list.length - 3} more</button>` : ''}
+      </div>`;
+    }
+    body.innerHTML = `<div class="cal-month">${html}</div>`;
+  } else {
+    let html = '';
+    for (let day = from; day <= to; day = addDays(day, 1)) {
+      const list = byDay[day] || [];
+      html += `<div class="cal-day${day === today ? ' today' : ''}">
+        <div class="cal-day-head"><span>${escapeHtml(dateParts(day).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }))}</span>
+          <button type="button" class="cal-add" data-add-day="${day}">+ Add</button></div>
+        ${list.map(e => chip(e, true)).join('') || '<div class="note" style="border:none;background:none;padding:0;">Nothing planned</div>'}
+      </div>`;
+    }
+    body.innerHTML = `<div class="cal-days">${html}</div>`;
+  }
+  body.querySelectorAll('[data-open-day]').forEach(b => b.addEventListener('click', () => { calAnchor = b.dataset.openDay; setCalMode('day'); renderCalendar(); }));
+  body.querySelectorAll('[data-add-day]').forEach(b => b.addEventListener('click', () => startAddOn(b.dataset.addDay)));
+  body.querySelectorAll('[data-ev]').forEach(b => b.addEventListener('click', () => {
+    const ev = shown.find(e => e.Id === Number(b.dataset.ev));
+    const box = document.getElementById('cal-selected');
+    box.innerHTML = '';
+    if (ev) {
+      box.appendChild(eventRowEl(ev, colors));
+      box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  }));
+}
+
+// "+ Add" on a calendar day: a new plan on that date.
+function startAddOn(day) {
+  resetForm();
+  document.getElementById('f-date').value = day;
+  syncRepeatOptions(false);
+  document.getElementById('form-heading').scrollIntoView({ behavior: 'smooth' });
+  document.getElementById('f-title').focus();
 }
 
 function renderEventList(events) {
@@ -236,13 +565,17 @@ function renderPlanKey() {
   }));
 }
 
-function eventRowEl(ev) {
+function eventRowEl(ev, colors) {
+  colors = colors || COLORS;
   const row = document.createElement('div');
   row.className = 'log-row';
-  row.style.cssText = planRowStyle(ev, COLORS);
+  row.style.cssText = planRowStyle(ev, colors);
   const mine = ev.Mine !== false;
+  const planned = ev.Status === 'Planned';
 
-  const metaBits = [planOwnerTagHtml(ev, COLORS) + formatEventWhen(ev)];
+  const metaBits = [planOwnerTagHtml(ev, colors) + formatEventWhen(ev)];
+  if (!planned) metaBits.push(`<strong>${escapeHtml(ev.Status)}</strong>`);
+  if (ev.Repeat) metaBits.push(`<span class="repeat-tag">↻ Repeats ${escapeHtml(repeatText(ev))}</span>`);
   if (ev.ActivityName) metaBits.push(escapeHtml(ev.ActivityName));
   if (ev.LocationName) metaBits.push(locationLinkHtml(ev.LocationName, ev.LocationAddress));
   metaBits.push(`<a href="${gcalUrl(ev)}" target="_blank" rel="noopener">Add to Google Calendar</a>`);
@@ -277,11 +610,24 @@ function eventRowEl(ev) {
   delBtn.className = 'btn secondary';
   delBtn.textContent = 'Delete';
   delBtn.addEventListener('click', () => deleteEvent(ev));
-  if (mine) {
+  const dupBtn = document.createElement('button');
+  dupBtn.type = 'button';
+  dupBtn.className = 'btn secondary';
+  dupBtn.textContent = 'Copy';
+  dupBtn.title = 'Start a new plan with these details';
+  dupBtn.addEventListener('click', () => startCopy(ev));
+  if (mine && !planned) {
+    // Completed (calendar): copy it to plan it again; delete a mistake.
+    actions.appendChild(dupBtn);
+    actions.appendChild(delBtn);
+  } else if (mine) {
     actions.appendChild(completeBtn);
     actions.appendChild(editBtn);
+    actions.appendChild(dupBtn);
     actions.appendChild(cancelBtn);
     actions.appendChild(delBtn);
+  } else if (!planned) {
+    // Someone else's completed plan: nothing to change.
   } else {
     // Someone else's plan: edit it, or copy it into your own plans.
     // Completing/cancelling/deleting stays with its owner.
@@ -308,7 +654,12 @@ async function startEdit(ev) {
     return;
   }
   editingId = ev.Id;
+  editingEvent = ev;
   document.getElementById('form-heading').textContent = mine ? 'Edit Planned Event' : `Edit ${planOwnerFirstName(ev)}'s Plan`;
+  document.getElementById('f-repeat-area').style.display = 'none';
+  document.getElementById('f-scope-area').style.display = ev.SeriesId ? '' : 'none';
+  document.querySelector('input[name="f-scope"][value="one"]').checked = true;
+  document.getElementById('f-repeat-text').textContent = repeatText(ev);
   document.getElementById('f-id').value = ev.Id;
   document.getElementById('f-title').value = ev.Title;
   document.getElementById('f-activity').value = ev.ActivityId ?? '';
@@ -324,13 +675,36 @@ async function startEdit(ev) {
 
 function resetForm() {
   editingId = null;
+  editingEvent = null;
   if (editingOwner !== null) useListsOf(null);
   document.getElementById('form-heading').textContent = 'Add a Planned Event';
   document.getElementById('event-form').reset();
   document.getElementById('f-id').value = '';
   document.getElementById('f-date').value = todayStr();
   document.getElementById('f-cancel').style.display = 'none';
+  document.getElementById('f-repeat-area').style.display = '';
+  document.getElementById('f-scope-area').style.display = 'none';
   toggleNewLocation();
+  syncRepeatOptions(false);
+}
+
+// Copy: a new plan pre-filled from one of yours -- change the date (or
+// anything) and save. Not repeating unless you set Repeat again.
+async function startCopy(ev) {
+  resetForm();
+  document.getElementById('form-heading').textContent = `Copy of "${ev.Title}"`;
+  document.getElementById('f-title').value = ev.Title;
+  document.getElementById('f-activity').value = ev.ActivityId ?? '';
+  document.getElementById('f-location').value = ev.LocationId ?? '';
+  toggleNewLocation();
+  document.getElementById('f-date').value = ev.StartDateTime.slice(0, 10);
+  document.getElementById('f-time').value = timeOnly(ev.StartDateTime);
+  document.getElementById('f-end-time').value = timeOnly(ev.EndDateTime);
+  document.getElementById('f-notes').value = ev.Notes || '';
+  document.getElementById('f-cancel').style.display = 'inline-block';
+  syncRepeatOptions(false);
+  showStatus('Copied into the form — change the date or anything else, then Save.');
+  document.getElementById('form-heading').scrollIntoView({ behavior: 'smooth' });
 }
 
 async function onSubmit(ev) {
@@ -359,22 +733,29 @@ async function onSubmit(ev) {
     endTime: document.getElementById('f-end-time').value,
     notes: document.getElementById('f-notes').value,
   };
+  const repeat = editingId ? null : repeatPayload();
+  if (repeat && repeat.freq === 'weekly' && !repeat.weekdays.length) { showStatus('Pick at least one day of the week.'); return; }
+  if (repeat && !repeat.count && !repeat.until) { showStatus('Choose when the repeat ends.'); return; }
   const btn = ev.target.querySelector('button[type="submit"]');
   btn.disabled = true;
   showStatus('');
+  let message;
   try {
     if (editingId) {
-      await postAction('updatePlannedEvent', { id: editingId, ...payload });
-      showStatus('Event updated.');
+      const scope = editingEvent && editingEvent.SeriesId
+        ? document.querySelector('input[name="f-scope"]:checked').value : 'one';
+      const res = await postAction('updatePlannedEvent', { id: editingId, scope, ...payload });
+      message = res.count > 1 ? `Updated ${res.count} plans.` : 'Event updated.';
     } else {
-      await postAction('addPlannedEvent', payload);
-      showStatus('Added.');
+      const res = await postAction('addPlannedEvent', repeat ? { ...payload, repeat } : payload);
+      message = res.count > 1 ? `Added ${res.count} plans.` : 'Added.';
     }
     resetForm();
     await load();
   } catch (e) {
-    showStatus("Couldn't save that event — check the date and time.");
+    message = "Couldn't save that event — check the date, time and repeat settings.";
   }
+  showStatus(message);
   btn.disabled = false;
 }
 
@@ -401,20 +782,34 @@ async function completeEvent(ev) {
 }
 
 async function cancelEvent(ev) {
-  if (!confirm(`Cancel "${ev.Title}"?`)) return;
+  let scope = 'one';
+  if (ev.SeriesId) {
+    scope = await askScope(`Cancel "${ev.Title}" — which ones?`);
+    if (!scope) return;
+  } else if (!confirm(`Cancel "${ev.Title}"?`)) {
+    return;
+  }
   try {
-    await postAction('setPlannedEventStatus', { id: ev.Id, status: 'Cancelled' });
+    const res = await postAction('setPlannedEventStatus', { id: ev.Id, status: 'Cancelled', scope });
     await load();
+    showStatus(res.count > 1 ? `Cancelled ${res.count} plans.` : 'Cancelled.');
   } catch (e) {
     showStatus("Couldn't cancel that event.");
   }
 }
 
 async function deleteEvent(ev) {
-  if (!confirm(`Delete "${ev.Title}"? This cannot be undone.`)) return;
+  let scope = 'one';
+  if (ev.SeriesId && ev.Status === 'Planned') {
+    scope = await askScope(`Delete "${ev.Title}" — which ones? This cannot be undone.`);
+    if (!scope) return;
+  } else if (!confirm(`Delete "${ev.Title}"? This cannot be undone.`)) {
+    return;
+  }
   try {
-    await postAction('deletePlannedEvent', { id: ev.Id });
+    const res = await postAction('deletePlannedEvent', { id: ev.Id, scope });
     await load();
+    showStatus(res.count > 1 ? `Deleted ${res.count} plans.` : 'Deleted.');
   } catch (e) {
     showStatus("Couldn't delete that event.");
   }
