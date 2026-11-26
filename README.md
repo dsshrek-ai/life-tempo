@@ -53,6 +53,19 @@ rate** button that fills Cost from that entry's duration (or start/end time)
 — a plain multiplication, not a persisted calculation, so the result can
 still be edited by hand afterward for a flat fee or a one-off adjustment.
 
+## Tasks and the Wall (2026-11-25)
+
+- **Tasks** (new nav item) — task lists with What / When / Who / Where /
+  Notes, sub-tasks to grandchildren (→ / ← and + Sub-task), move up/down,
+  collapse, Clear checked / Restore, Duplicate. Separate from Master
+  Checklist's lists.
+- **Sharing** — share a list with another Life Tempo user by email; everyone
+  on it can add, check and arrange, only the owner renames/shares/deletes.
+  Open pages pick up each other's changes within about 10 seconds.
+- **The Wall** — "Explode to the Wall" shows one tile per top-level task in
+  list order, sub-tasks inside. Tap to check; checked tiles stay in place,
+  dimmed with a ✓. Tiles move only by moving the task in the list.
+
 ## Next
 
 There is no Phase 8 in the spec — Phase 7 is the end of the documented

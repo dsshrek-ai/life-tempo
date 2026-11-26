@@ -1,0 +1,616 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tasks | Life Tempo</title>
+<link rel="stylesheet" href="style.css?v=20261104">
+<style>
+  /* Lists overview */
+  .list-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 0.8rem; }
+  .list-card { display: block; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.9rem 1rem;
+    text-decoration: none; color: var(--text); }
+  .list-card:hover { border-color: var(--accent); }
+  .list-card .lc-name { font-weight: 700; color: var(--primary-dark); font-size: 1.05rem; }
+  .list-card .lc-meta { color: var(--muted); font-size: 0.85rem; margin-top: 0.2rem; }
+  .inline-form { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+  .inline-form input[type="text"], .inline-form input[type="email"] { flex: 1; min-width: 12rem; max-width: none; }
+  .err { color: #a3302a; font-size: 0.9rem; min-height: 1.2em; margin-top: 0.3rem; }
+
+  /* One list */
+  .list-head { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+  .list-head h2 { margin: 0; flex: 1; min-width: 10rem; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0.6rem 0; }
+  .btn.small { padding: 0.3rem 0.7rem; font-size: 0.88rem; }
+  .progress-line { color: var(--muted); font-size: 0.9rem; }
+  .task { border-bottom: 1px solid var(--border); }
+  .task:last-child { border-bottom: none; }
+  .task-row { display: flex; align-items: flex-start; gap: 0.5rem; padding: 0.5rem 0; }
+  .task-row input[type="checkbox"] { width: 1.3rem; height: 1.3rem; margin-top: 0.2rem; flex-shrink: 0; accent-color: var(--primary); }
+  .task-row .t-body { flex: 1; min-width: 0; }
+  .task-row .t-what { overflow-wrap: anywhere; }
+  .task-row.done .t-what { text-decoration: line-through; color: var(--muted); }
+  .task-row .t-meta { color: var(--muted); font-size: 0.82rem; }
+  .task-row .t-notes { font-size: 0.85rem; white-space: pre-wrap; color: var(--text); opacity: 0.85; }
+  .t-toggle, .t-more { background: none; border: none; cursor: pointer; font: inherit; color: var(--primary-dark); min-width: 2rem; min-height: 2rem; padding: 0; }
+  .t-toggle.none { visibility: hidden; }
+  .depth-1 > .task-row { padding-left: 1.6rem; }
+  .depth-2 > .task-row { padding-left: 3.2rem; }
+  .t-actions { display: flex; flex-wrap: wrap; gap: 0.35rem; padding: 0 0 0.6rem 2.5rem; }
+  .t-form { padding: 0 0 0.8rem 2.5rem; }
+  .t-form .form-grid input, .t-form .form-grid select { max-width: none; }
+  .due-over { color: #a3302a; font-weight: 700; }
+  .due-today { color: var(--amber); font-weight: 700; }
+  .member-row { display: flex; align-items: center; gap: 0.5rem; padding: 0.3rem 0; border-bottom: 1px solid var(--border); }
+  .member-row span { flex: 1; }
+
+  /* The Wall */
+  main.wall-mode { max-width: 1400px; }
+  .wall-head { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1rem; margin-bottom: 0.8rem; }
+  .wall-head h2 { margin: 0; flex: 1; min-width: 10rem; }
+  .wall-bar { height: 0.6rem; background: var(--tint); border-radius: 999px; overflow: hidden; margin: 0.2rem 0 1rem; }
+  .wall-bar > div { height: 100%; background: var(--green); transition: width 0.3s; }
+  .wall { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 0.8rem; }
+  @media (max-width: 560px) { .wall { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.55rem; } }
+  .tile { position: relative; border-radius: 12px; border: 2px solid transparent; box-shadow: 0 2px 4px rgba(42, 27, 38, 0.12);
+    display: flex; flex-direction: column; min-height: 8.5rem; overflow: hidden; transition: opacity 0.2s, transform 0.1s; }
+  .tile.c0 { background: #fbe8ee; } .tile.c1 { background: #e9e2f5; } .tile.c2 { background: #e1f0e6; }
+  .tile.c3 { background: #fdf0d8; } .tile.c4 { background: #e0ecf6; } .tile.c5 { background: #f6e4dc; }
+  .tile.over { border-color: #a3302a; }
+  .tile.today { border-color: var(--amber); }
+  .tile-main { flex: 1; display: block; width: 100%; text-align: left; background: none; border: none; cursor: pointer; font: inherit; color: var(--text);
+    padding: 0.75rem 0.8rem 0.5rem; }
+  .tile-main:active { transform: scale(0.98); }
+  .tile-main .tw { font-weight: 700; font-size: 1.02rem; line-height: 1.3; overflow-wrap: anywhere; display: block; }
+  .tile-main .tm { display: block; font-size: 0.78rem; color: var(--muted); margin-top: 0.3rem; }
+  .tile-main .tm .due-over, .tile-main .tm .due-today { display: inline; }
+  .tile-subs { list-style: none; margin: 0; padding: 0 0.5rem 0.5rem; }
+  .tile-sub { display: flex; gap: 0.4rem; align-items: flex-start; width: 100%; text-align: left; background: rgba(255, 255, 255, 0.55); border: none;
+    border-radius: 6px; cursor: pointer; font: inherit; font-size: 0.85rem; color: var(--text); padding: 0.3rem 0.45rem; margin-top: 0.25rem; }
+  .tile-sub.gc { margin-left: 1rem; width: calc(100% - 1rem); font-size: 0.8rem; }
+  .tile-sub .box { flex-shrink: 0; width: 1rem; height: 1rem; border: 2px solid var(--primary); border-radius: 4px; margin-top: 0.15rem; display: inline-flex;
+    align-items: center; justify-content: center; font-size: 0.7rem; color: #fff; }
+  .tile-sub[aria-pressed="true"] .box { background: var(--primary); }
+  .tile-sub[aria-pressed="true"] .sw { text-decoration: line-through; color: var(--muted); }
+  .tile-count { font-size: 0.75rem; color: var(--muted); padding: 0 0.8rem 0.5rem; }
+  .tile.done { opacity: 0.55; }
+  .tile.done .tw { text-decoration: line-through; }
+  .tile .check { position: absolute; top: 0.3rem; right: 0.5rem; font-size: 2.2rem; line-height: 1; color: var(--green); font-weight: 700; pointer-events: none; }
+  .wall-empty { padding: 2rem 1rem; text-align: center; }
+  @media print { header.site-header, .toolbar, .no-print { display: none !important; } }
+</style>
+</head>
+<body>
+
+<header class="site-header">
+  <div class="bar">
+    <h1>🧭 Life Tempo</h1>
+    <nav>
+      <a href="index.html">Today</a>
+      <a href="plan.html">Plan</a>
+      <a href="tasks.html" aria-current="page">Tasks</a>
+      <a href="history.html">History</a>
+      <a href="trips.html">Trips</a>
+      <a href="dashboard.html">Dashboard</a>
+      <a href="engagement.html">Engagement</a>
+      <a href="reports.html">Reports</a>
+      <a href="manage.html">Manage</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+  <div id="status"></div>
+  <div id="content"><p class="note">Loading…</p></div>
+</main>
+
+<footer class="site-footer">Life Tempo — Tasks and the Wall</footer>
+
+<script src="js/api.js?v=20261104"></script>
+<script>
+// Task lists (api/tasks.php). Three views on one page:
+//   tasks.html                 every list you own or that's shared with you
+//   tasks.html?list=ID         one list: add, nest (to grandchildren), arrange, check, share
+//   tasks.html?list=ID&wall=1  the Wall: one tile per top-level task, in list order.
+//                              Tiles never move on their own -- you move the task in the list.
+const statusEl = document.getElementById('status');
+const contentEl = document.getElementById('content');
+const params = new URLSearchParams(window.location.search);
+const listId = Number(params.get('list')) || 0;
+const wallMode = !!listId && params.get('wall') === '1';
+const COLLAPSE_KEY = 'ltTaskCollapsed';
+
+let LIST = null;          // { Id, Name, Mine, Version, Members }
+let TASKS = [];           // every task row, cleared ones included
+let openActions = null;   // task id whose action bar is open
+let openForm = null;      // { kind: 'edit' | 'sub', id }
+let showDetails = false;  // the "more details" part of the add form
+let showPeople = false;
+let pollTimer = null;
+
+function showStatus(msg) {
+  if (!msg) { statusEl.style.display = 'none'; return; }
+  statusEl.textContent = msg;
+  statusEl.style.display = 'block';
+  clearTimeout(showStatus.t);
+  showStatus.t = setTimeout(() => showStatus(''), 4000);
+}
+const attr = s => escapeHtml(s).replace(/"/g, '&quot;');
+
+// Like fetchData/postAction, but keeps the server's message ("Say what the task is").
+async function tGet(action, p) {
+  const qs = new URLSearchParams({ action, ...(p || {}) });
+  return readTask(await fetch(`${CONFIG.API_URL}?${qs}`, { headers: authHeaders() }));
+}
+async function tPost(action, payload) {
+  return readTask(await fetch(CONFIG.API_URL, {
+    method: 'POST', headers: { 'Content-Type': 'text/plain', ...authHeaders() },
+    body: JSON.stringify({ action, ...(payload || {}) }),
+  }));
+}
+async function readTask(res) {
+  if (res.status === 401 || (res.status === 403 && !getToken())) { throw new Error('not-authorized'); }
+  let data = null;
+  try { data = await res.json(); } catch (e) { /* not JSON */ }
+  if (res.status === 403 && data && /authorized for Life Tempo/.test(data.error || '')) { throw new Error('not-authorized'); }
+  if (!res.ok || !data || data.ok === false) {
+    const err = new Error((data && data.error) || `Request failed: ${res.status}`);
+    err.status = res.status;
+    throw err;
+  }
+  return data;
+}
+
+// ---- Collapsed branches (this device only) ----
+function collapsed() { try { return new Set(JSON.parse(localStorage.getItem(COLLAPSE_KEY)) || []); } catch (e) { return new Set(); } }
+function setCollapsed(set) { try { localStorage.setItem(COLLAPSE_KEY, JSON.stringify([...set])); } catch (e) { /* private mode */ } }
+
+// ---- Dates ----
+function todayIso() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+function dueClass(t) {
+  if (!t.WhenDate || t.Complete) { return ''; }
+  const today = todayIso();
+  return t.WhenDate < today ? 'over' : (t.WhenDate === today ? 'today' : '');
+}
+function whenText(t) {
+  if (!t.WhenDate && !t.WhenTime) { return ''; }
+  let s = '';
+  if (t.WhenDate) {
+    const today = todayIso();
+    s = t.WhenDate === today ? 'Today' : new Date(`${t.WhenDate}T12:00:00`).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+  }
+  if (t.WhenTime) {
+    const [h, m] = t.WhenTime.split(':').map(Number);
+    s += `${s ? ' ' : ''}${((h + 11) % 12) + 1}:${String(m).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`;
+  }
+  return s;
+}
+function metaHtml(t) {
+  const bits = [];
+  const w = whenText(t);
+  const dc = dueClass(t);
+  if (w) { bits.push(`<span class="${dc ? `due-${dc}` : ''}">${dc === 'over' ? 'Overdue · ' : ''}${escapeHtml(w)}</span>`); }
+  if (t.Who) { bits.push(`👤 ${escapeHtml(t.Who)}`); }
+  if (t.Where) { bits.push(`📍 ${escapeHtml(t.Where)}`); }
+  return bits.join(' · ');
+}
+
+// ---- Tree: what's visible (cleared tasks and everything under them are hidden) ----
+function visibleTree() {
+  const kids = new Map();
+  for (const t of TASKS) {
+    const k = t.ParentId || 0;
+    if (!kids.has(k)) { kids.set(k, []); }
+    kids.get(k).push(t);
+  }
+  for (const arr of kids.values()) { arr.sort((a, b) => a.SortOrder - b.SortOrder || a.Id - b.Id); }
+  const childrenOf = id => (kids.get(id) || []).filter(t => !t.Cleared);
+  return { top: childrenOf(0), childrenOf };
+}
+function visibleList() {
+  const { top, childrenOf } = visibleTree();
+  const out = [];
+  const walk = t => { out.push(t); childrenOf(t.Id).forEach(walk); };
+  top.forEach(walk);
+  return out;
+}
+
+// ======================= Lists overview =======================
+
+async function renderOverview() {
+  const { lists } = await tGet('taskLists');
+  contentEl.innerHTML = `
+    <h2>Tasks</h2>
+    <div class="card">
+      <form class="inline-form" id="new-list" novalidate>
+        <input type="text" id="new-list-name" maxlength="255" placeholder="New list name — e.g. Garage clean-out" aria-label="New list name">
+        <button type="submit" class="btn">Add list</button>
+      </form>
+      <div class="err" id="new-list-err" role="alert"></div>
+    </div>
+    ${lists.length ? `<div class="list-cards">${lists.map(l => `
+      <a class="list-card" href="tasks.html?list=${l.Id}">
+        <div class="lc-name">${escapeHtml(l.Name)}</div>
+        <div class="lc-meta">${l.Open} to do${l.Done ? ` · ${l.Done} done` : ''}</div>
+        <div class="lc-meta">${l.Mine ? (l.SharedCount ? `Shared with ${l.SharedCount} ${l.SharedCount === 1 ? 'person' : 'people'}` : 'Just you') : `Shared by ${escapeHtml(l.OwnerName)}`}</div>
+      </a>`).join('')}</div>`
+    : '<p class="note">No lists yet. Make one above — then add tasks, sub-tasks, and explode it onto the Wall.</p>'}`;
+  document.getElementById('new-list').addEventListener('submit', async ev => {
+    ev.preventDefault();
+    const name = document.getElementById('new-list-name').value.trim();
+    const err = document.getElementById('new-list-err');
+    if (!name) { err.textContent = 'Give the list a name.'; return; }
+    try {
+      const r = await tPost('addTaskList', { name });
+      window.location.href = `tasks.html?list=${r.id}`;
+    } catch (e) { err.textContent = e.message; }
+  });
+}
+
+// ======================= One list =======================
+
+function taskFormHtml(t, kind) {
+  const v = t || {};
+  return `<form class="t-form" data-form="${kind}" novalidate>
+    <label for="f-what" style="margin-top:0">${kind === 'sub' ? 'New sub-task' : 'What'}</label>
+    <input type="text" id="f-what" maxlength="500" value="${attr(v.What || '')}" style="max-width:none">
+    ${kind === 'edit' ? `<div class="form-grid">
+      <div><label for="f-date">When (date)</label><input type="date" id="f-date" value="${attr(v.WhenDate || '')}"></div>
+      <div><label for="f-time">Time</label><input type="time" id="f-time" value="${attr(v.WhenTime || '')}"></div>
+      <div><label for="f-who">Who</label><input type="text" id="f-who" maxlength="255" value="${attr(v.Who || '')}"></div>
+      <div><label for="f-where">Where</label><input type="text" id="f-where" maxlength="255" value="${attr(v.Where || '')}"></div>
+    </div>
+    <label for="f-notes">Notes</label><textarea id="f-notes" maxlength="5000">${escapeHtml(v.Notes || '')}</textarea>` : ''}
+    <div class="err" role="alert"></div>
+    <div class="toolbar"><button type="submit" class="btn small">${kind === 'sub' ? 'Add' : 'Save'}</button>
+      <button type="button" class="btn small secondary" data-cancel>Cancel</button></div>
+  </form>`;
+}
+
+function taskHtml(t, childrenOf, folded) {
+  const kids = childrenOf(t.Id);
+  const isFolded = folded.has(t.Id);
+  const doneKids = kids.filter(k => k.Complete).length;
+  return `<div class="task depth-${t.Depth}" data-id="${t.Id}">
+    <div class="task-row${t.Complete ? ' done' : ''}">
+      <button type="button" class="t-toggle${kids.length ? '' : ' none'}" data-fold aria-expanded="${!isFolded}" aria-label="${isFolded ? 'Show' : 'Hide'} sub-tasks of ${attr(t.What)}">${isFolded ? '▸' : '▾'}</button>
+      <input type="checkbox" data-check${t.Complete ? ' checked' : ''} aria-label="${attr(t.What)}">
+      <div class="t-body">
+        <div class="t-what">${escapeHtml(t.What)}${kids.length ? ` <span class="t-meta">(${doneKids}/${kids.length})</span>` : ''}</div>
+        ${metaHtml(t) ? `<div class="t-meta">${metaHtml(t)}</div>` : ''}
+        ${t.Notes ? `<div class="t-notes">${escapeHtml(t.Notes)}</div>` : ''}
+        ${t.Complete && t.CompletedBy && LIST.Members.length > 1 ? `<div class="t-meta">✓ ${escapeHtml(t.CompletedBy)}</div>` : ''}
+      </div>
+      <button type="button" class="t-more" data-more aria-expanded="${openActions === t.Id}" aria-label="More for ${attr(t.What)}">⋯</button>
+    </div>
+    ${openActions === t.Id ? `<div class="t-actions">
+      ${t.Depth < 2 ? '<button type="button" class="btn small secondary" data-act="sub">+ Sub-task</button>' : ''}
+      <button type="button" class="btn small secondary" data-act="edit">Edit</button>
+      <button type="button" class="btn small secondary" data-act="up" aria-label="Move up">↑</button>
+      <button type="button" class="btn small secondary" data-act="down" aria-label="Move down">↓</button>
+      <button type="button" class="btn small secondary" data-act="indent" aria-label="Make it a sub-task of the one above">→</button>
+      ${t.Depth > 0 ? '<button type="button" class="btn small secondary" data-act="outdent" aria-label="Move it out a level">←</button>' : ''}
+      <button type="button" class="btn small secondary" data-act="delete">Delete</button>
+    </div>` : ''}
+    ${openForm && openForm.id === t.Id ? taskFormHtml(openForm.kind === 'edit' ? t : null, openForm.kind) : ''}
+    ${isFolded ? '' : kids.map(k => taskHtml(k, childrenOf, folded)).join('')}
+  </div>`;
+}
+
+function renderList() {
+  document.title = `${LIST.Name} | Tasks | Life Tempo`;
+  // A redraw (after a change, or someone else's edit) must never lose what's being typed.
+  const formKey = openForm ? `${openForm.kind}:${openForm.id}` : '';
+  const sameForm = formKey && formKey === renderList.formKey;
+  renderList.formKey = formKey;
+  const keep = ['a-what', 'a-date', 'a-time', 'a-who', 'a-where', 'a-notes', 'share-email',
+    ...(sameForm ? ['f-what', 'f-date', 'f-time', 'f-who', 'f-where', 'f-notes'] : [])]
+    .map(id => [id, document.getElementById(id)]).filter(([, el]) => el).map(([id, el]) => [id, el.value]);
+  const focusId = document.activeElement && document.activeElement.id;
+  const { top, childrenOf } = visibleTree();
+  const all = visibleList();
+  const done = all.filter(t => t.Complete).length;
+  const cleared = TASKS.filter(t => t.Cleared).length;
+  const folded = collapsed();
+  const others = LIST.Members.filter(m => !m.Owner);
+  contentEl.innerHTML = `
+    <p class="no-print"><a href="tasks.html">← All task lists</a></p>
+    <div class="list-head">
+      <h2>${escapeHtml(LIST.Name)}</h2>
+      <a class="btn accent" href="tasks.html?list=${LIST.Id}&wall=1">🧱 Explode to the Wall</a>
+    </div>
+    <p class="progress-line">${all.length ? `${done} of ${all.length} done` : 'No tasks yet'}${others.length ? ` · ${LIST.Mine ? 'Shared with ' + others.map(m => escapeHtml(m.Name)).join(', ') : 'Shared by ' + escapeHtml(LIST.Members[0].Name)}` : ''}</p>
+    <div class="toolbar no-print">
+      <button type="button" class="btn small secondary" id="people-btn" aria-expanded="${showPeople}">👥 ${LIST.Mine ? 'Share' : 'People'}</button>
+      ${done ? '<button type="button" class="btn small secondary" id="clear-btn">Clear checked</button>' : ''}
+      ${cleared ? `<button type="button" class="btn small secondary" id="restore-btn">Restore ${cleared} cleared</button>` : ''}
+      <button type="button" class="btn small secondary" id="dup-btn">Duplicate</button>
+      ${LIST.Mine ? '<button type="button" class="btn small secondary" id="rename-btn">Rename</button><button type="button" class="btn small secondary" id="del-list-btn">Delete list</button>' : ''}
+    </div>
+    ${showPeople ? peopleHtml() : ''}
+    <div class="card no-print">
+      <form id="add-task" novalidate>
+        <div class="inline-form">
+          <input type="text" id="a-what" maxlength="500" placeholder="Add a task…" aria-label="New task">
+          <button type="submit" class="btn">Add</button>
+        </div>
+        <button type="button" class="link-btn btn small secondary" id="a-more" aria-expanded="${showDetails}" style="margin-top:0.5rem">${showDetails ? 'Fewer details' : 'More details (when, who, where, notes)'}</button>
+        ${showDetails ? `<div class="form-grid">
+          <div><label for="a-date">When (date)</label><input type="date" id="a-date"></div>
+          <div><label for="a-time">Time</label><input type="time" id="a-time"></div>
+          <div><label for="a-who">Who</label><input type="text" id="a-who" maxlength="255"></div>
+          <div><label for="a-where">Where</label><input type="text" id="a-where" maxlength="255"></div>
+        </div>
+        <label for="a-notes">Notes</label><textarea id="a-notes" maxlength="5000"></textarea>` : ''}
+        <div class="err" id="a-err" role="alert"></div>
+      </form>
+    </div>
+    <div class="card" id="tree">${top.length ? top.map(t => taskHtml(t, childrenOf, folded)).join('') : '<p class="note" style="margin:0">Add your first task above. Use ⋯ on a task to add sub-tasks, move it, or nest it.</p>'}</div>`;
+  wireList();
+  for (const [id, v] of keep) { const el = document.getElementById(id); if (el && !el.value) { el.value = v; } }
+  if (focusId && document.getElementById(focusId)) { document.getElementById(focusId).focus(); }
+}
+
+function peopleHtml() {
+  return `<div class="card no-print" id="people">
+    <h3 style="margin-top:0">People on this list</h3>
+    ${LIST.Members.map(m => `<div class="member-row"><span>${escapeHtml(m.Name)} <span class="t-meta">${escapeHtml(m.Email)}${m.Owner ? ' · made the list' : ''}</span></span>
+      ${!m.Owner && LIST.Mine ? `<button type="button" class="btn small secondary" data-unshare="${m.UserId}">Remove</button>` : ''}</div>`).join('')}
+    ${LIST.Mine ? `<form class="inline-form" id="share-form" novalidate style="margin-top:0.7rem">
+        <input type="email" id="share-email" placeholder="Their Life Tempo email" aria-label="Email to share with">
+        <button type="submit" class="btn small">Share</button></form>
+      <div class="err" id="share-err" role="alert"></div>
+      <p class="t-meta">Everyone on the list can add, check, edit and arrange tasks. Only you can rename, share or delete it.</p>`
+    : '<p><button type="button" class="btn small secondary" id="leave-btn">Leave this list</button></p>'}
+  </div>`;
+}
+
+// Runs a change, then reloads the list. Keeps the page usable if it fails.
+async function change(action, payload, msg) {
+  try {
+    await tPost(action, payload);
+    if (msg) { showStatus(msg); }
+  } catch (e) {
+    showStatus(e.message);
+  }
+  await loadList();
+}
+
+function wireList() {
+  const tree = document.getElementById('tree');
+  const byId = id => TASKS.find(t => t.Id === id);
+  tree.querySelectorAll('.task').forEach(el => {
+    const id = Number(el.dataset.id);
+    const t = byId(id);
+    const row = el.querySelector(':scope > .task-row');
+    row.querySelector('[data-check]').addEventListener('change', ev => {
+      t.Complete = ev.target.checked;   // shown at once; the reload confirms it
+      change('setTaskComplete', { id, complete: ev.target.checked });
+    });
+    row.querySelector('[data-fold]').addEventListener('click', () => {
+      const set = collapsed();
+      if (set.has(id)) { set.delete(id); } else { set.add(id); }
+      setCollapsed(set);
+      renderList();
+    });
+    row.querySelector('[data-more]').addEventListener('click', () => {
+      openActions = openActions === id ? null : id;
+      openForm = null;
+      renderList();
+    });
+    el.querySelectorAll(':scope > .t-actions [data-act]').forEach(b => b.addEventListener('click', () => {
+      const act = b.dataset.act;
+      if (act === 'sub' || act === 'edit') {
+        openForm = { kind: act, id };
+        if (act === 'sub') { const set = collapsed(); set.delete(id); setCollapsed(set); }
+        renderList();
+        document.getElementById('f-what').focus();
+      } else if (act === 'up' || act === 'down') {
+        change('moveTask', { id, direction: act });
+      } else if (act === 'indent') {
+        change('indentTask', { id });
+      } else if (act === 'outdent') {
+        change('outdentTask', { id });
+      } else if (act === 'delete') {
+        if (!confirm(`Delete "${t.What}"${TASKS.some(x => x.ParentId === id) ? ' and everything under it' : ''}?`)) { return; }
+        openActions = null;
+        change('deleteTask', { id }, 'Deleted');
+      }
+    }));
+    const form = el.querySelector(':scope > form[data-form]');
+    if (form) {
+      form.querySelector('[data-cancel]').addEventListener('click', () => { openForm = null; renderList(); });
+      form.addEventListener('submit', async ev => {
+        ev.preventDefault();
+        const what = form.querySelector('#f-what').value;
+        try {
+          if (form.dataset.form === 'sub') {
+            await tPost('addTask', { listId: LIST.Id, parentId: id, what });
+            form.querySelector('#f-what').value = '';
+          } else {
+            await tPost('updateTask', { id, what, whenDate: form.querySelector('#f-date').value, whenTime: form.querySelector('#f-time').value,
+              who: form.querySelector('#f-who').value, where: form.querySelector('#f-where').value, notes: form.querySelector('#f-notes').value });
+            openForm = null;
+            openActions = null;
+          }
+          await loadList();
+          if (openForm && openForm.kind === 'sub') { document.getElementById('f-what').focus(); }
+        } catch (e) { form.querySelector('.err').textContent = e.message; }
+      });
+    }
+  });
+
+  document.getElementById('a-more').addEventListener('click', () => {
+    showDetails = !showDetails;
+    renderList();
+  });
+  document.getElementById('add-task').addEventListener('submit', async ev => {
+    ev.preventDefault();
+    const val = id => (document.getElementById(id) ? document.getElementById(id).value : '');
+    try {
+      await tPost('addTask', { listId: LIST.Id, what: val('a-what'), whenDate: val('a-date'), whenTime: val('a-time'),
+        who: val('a-who'), where: val('a-where'), notes: val('a-notes') });
+      document.querySelectorAll('#add-task input, #add-task textarea').forEach(el => { el.value = ''; });
+      document.getElementById('a-err').textContent = '';
+      await loadList();
+      document.getElementById('a-what').focus();
+    } catch (e) { document.getElementById('a-err').textContent = e.message; }
+  });
+
+  document.getElementById('people-btn').addEventListener('click', () => { showPeople = !showPeople; renderList(); });
+  const on = (id, fn) => { const el = document.getElementById(id); if (el) { el.addEventListener('click', fn); } };
+  on('clear-btn', () => change('clearCheckedTasks', { listId: LIST.Id }, 'Checked tasks cleared — Restore brings them back'));
+  on('restore-btn', () => change('restoreClearedTasks', { listId: LIST.Id }, 'Restored'));
+  on('dup-btn', async () => {
+    const name = prompt('Name for the copy:', `${LIST.Name} (copy)`);
+    if (name === null) { return; }
+    try {
+      const r = await tPost('duplicateTaskList', { id: LIST.Id, name });
+      window.location.href = `tasks.html?list=${r.id}`;
+    } catch (e) { showStatus(e.message); }
+  });
+  on('rename-btn', () => {
+    const name = prompt('Rename the list:', LIST.Name);
+    if (name !== null) { change('renameTaskList', { id: LIST.Id, name }); }
+  });
+  on('del-list-btn', async () => {
+    if (!confirm(`Delete "${LIST.Name}" and all its tasks${LIST.Members.length > 1 ? ', for everyone it\'s shared with' : ''}? This can't be undone.`)) { return; }
+    try {
+      await tPost('deleteTaskList', { id: LIST.Id });
+      window.location.href = 'tasks.html';
+    } catch (e) { showStatus(e.message); }
+  });
+  on('leave-btn', async () => {
+    if (!confirm(`Leave "${LIST.Name}"? It will disappear from your lists.`)) { return; }
+    try {
+      await tPost('unshareTaskList', { id: LIST.Id, userId: LIST.Members.find(m => m.Me).UserId });
+      window.location.href = 'tasks.html';
+    } catch (e) { showStatus(e.message); }
+  });
+  const share = document.getElementById('share-form');
+  if (share) {
+    share.addEventListener('submit', async ev => {
+      ev.preventDefault();
+      try {
+        const r = await tPost('shareTaskList', { id: LIST.Id, email: document.getElementById('share-email').value });
+        LIST.Members = r.members;
+        document.getElementById('share-email').value = '';
+        renderList();
+        showStatus('Shared');
+      } catch (e) { document.getElementById('share-err').textContent = e.message; }
+    });
+  }
+  document.querySelectorAll('[data-unshare]').forEach(b => b.addEventListener('click', async () => {
+    const m = LIST.Members.find(x => x.UserId === Number(b.dataset.unshare));
+    if (!confirm(`Stop sharing "${LIST.Name}" with ${m.Name}?`)) { return; }
+    change('unshareTaskList', { id: LIST.Id, userId: m.UserId });
+  }));
+}
+
+// ======================= The Wall =======================
+
+function renderWall() {
+  document.title = `${LIST.Name} — Wall | Life Tempo`;
+  document.getElementById('main').classList.add('wall-mode');
+  const { top, childrenOf } = visibleTree();
+  const all = visibleList();
+  const done = all.filter(t => t.Complete).length;
+  const tiles = top.map((t, i) => {
+    const kids = childrenOf(t.Id);
+    const subs = kids.flatMap(k => [k, ...childrenOf(k.Id)]);
+    const dc = dueClass(t);
+    const meta = metaHtml(t);
+    return `<div class="tile c${i % 6}${t.Complete ? ' done' : ''}${dc ? ` ${dc}` : ''}" data-id="${t.Id}">
+      <button type="button" class="tile-main" data-tile="${t.Id}" aria-pressed="${t.Complete}">
+        <span class="tw">${escapeHtml(t.What)}</span>
+        ${meta ? `<span class="tm">${meta}</span>` : ''}
+      </button>
+      ${subs.length ? `<ul class="tile-subs">${subs.map(s => `<li><button type="button" class="tile-sub${s.Depth === 2 ? ' gc' : ''}" data-tile="${s.Id}" aria-pressed="${s.Complete}">
+        <span class="box" aria-hidden="true">${s.Complete ? '✓' : ''}</span><span class="sw">${escapeHtml(s.What)}</span></button></li>`).join('')}</ul>
+        <div class="tile-count">${subs.filter(s => s.Complete).length} of ${subs.length} sub-tasks done</div>` : ''}
+      ${t.Complete ? '<span class="check" aria-hidden="true">✓</span>' : ''}
+    </div>`;
+  }).join('');
+  contentEl.innerHTML = `
+    <div class="wall-head">
+      <h2>🧱 ${escapeHtml(LIST.Name)}</h2>
+      <a class="btn secondary small no-print" href="tasks.html?list=${LIST.Id}">← Back to the list</a>
+    </div>
+    <p class="progress-line" style="margin:0">${all.length ? `${done} of ${all.length} done — tap a tile to check it off` : ''}</p>
+    <div class="wall-bar" role="progressbar" aria-valuemin="0" aria-valuemax="${all.length}" aria-valuenow="${done}" aria-label="Done"><div style="width:${all.length ? Math.round(done / all.length * 100) : 0}%"></div></div>
+    ${top.length ? `<div class="wall" id="wall">${tiles}</div>
+      <p class="t-meta no-print" style="margin-top:1rem">Tiles follow the list's order. To move a tile, move its task up or down in the list.</p>`
+    : `<div class="card wall-empty"><p>Nothing on this list yet.</p><p><a href="tasks.html?list=${LIST.Id}">Add tasks</a></p></div>`}`;
+
+  document.querySelectorAll('[data-tile]').forEach(b => b.addEventListener('click', async () => {
+    const t = TASKS.find(x => x.Id === Number(b.dataset.tile));
+    t.Complete = !t.Complete;
+    renderWall();   // right away; the server catches up
+    try {
+      await tPost('setTaskComplete', { id: t.Id, complete: t.Complete });
+      LIST.Version += 1;
+    } catch (e) {
+      t.Complete = !t.Complete;
+      renderWall();
+      showStatus(e.message);
+    }
+  }));
+}
+
+// ======================= Loading and live refresh =======================
+
+async function loadList() {
+  const data = await tGet('taskList', { id: listId });
+  LIST = data.list;
+  TASKS = data.tasks;
+  const me = await myId();
+  LIST.Members.forEach(m => { m.Me = m.UserId === me; });
+  if (wallMode) { renderWall(); } else { renderList(); }
+}
+
+let _me = null;
+async function myId() {
+  if (_me === null) { _me = (await fetchData('ping')).userId; }
+  return _me;
+}
+
+// Shared lists: pick up someone else's change within ~10 seconds, unless you're typing.
+function startPolling() {
+  clearInterval(pollTimer);
+  pollTimer = setInterval(async () => {
+    if (document.hidden || !LIST) { return; }
+    const a = document.activeElement;
+    if (a && (a.tagName === 'INPUT' && a.type !== 'checkbox' || a.tagName === 'TEXTAREA')) { return; }
+    if (openForm) { return; }
+    try {
+      const { version } = await tGet('taskListVersion', { id: listId });
+      if (version !== LIST.Version) { await loadList(); }
+    } catch (e) { /* offline for a moment: try again next time */ }
+  }, 10000);
+}
+
+(async () => {
+  await captureSso();
+  try {
+    applyNavVisibility(await loadPreferences());
+    if (listId) {
+      await loadList();
+      startPolling();
+    } else {
+      await renderOverview();
+    }
+  } catch (e) {
+    if (e.status === 404) {
+      contentEl.innerHTML = '<div class="card"><p>That list isn\'t available — it may have been deleted or not shared with you.</p><p><a href="tasks.html">All task lists</a></p></div>';
+    } else {
+      handleError(contentEl, e);
+    }
+  }
+})();
+</script>
+
+</body>
+</html>

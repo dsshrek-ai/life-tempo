@@ -214,3 +214,21 @@ Adds a Billing Rate to Clients so Cost can be calculated instead of typed.
    Today/History, picking that client on a log entry shows the rate with a
    **Calculate from rate** button that fills Cost from the entry's duration
    (or start/end time) — you can still edit the result by hand afterward.
+
+## Tasks and the Wall update (2026-11-25)
+
+Adds **Tasks** (new nav item): Life Tempo's own task lists, separate from
+Master Checklist's. Tasks nest to grandchildren, lists can be shared by
+email, and **Explode to the Wall** shows a list as tiles you tap to check off.
+
+1. In phpMyAdmin, run **`api/tasks-schema.sql`** (not the whole
+   `schema.sql` — its older ALTERs can't be re-run). It only creates
+   `lt_task_lists`, `lt_task_list_shares` and `lt_tasks`, and is safe to
+   run twice.
+2. Upload `api/api.php` (replace) and the new **`api/tasks.php`** next to
+   it in `seniorfamily.org/life-tempo-api/`.
+3. Push the front end (new `tasks.html`; every page's menu gained a Tasks link).
+
+Tests: `tests/tasks.test.mjs` (14 API checks) and `tests/ui-tasks.mjs`
+(12 browser steps) — see the comments at the top of each for the throwaway
+database they need.

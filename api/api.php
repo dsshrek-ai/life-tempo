@@ -2222,6 +2222,12 @@ $method = $_SERVER['REQUEST_METHOD'];
 $body = $method === 'POST' ? jsonBody() : [];
 $action = $method === 'GET' ? ($_GET['action'] ?? '') : ($body['action'] ?? '');
 
+// Task lists and the Wall live in tasks.php.
+require_once __DIR__ . '/tasks.php';
+if (in_array($action, TASK_ACTIONS, true)) {
+  handleTaskAction($action, $body);
+}
+
 switch ($action) {
 
   // Phase 1 proof-of-life: confirms the bearer token resolves to a UserID
