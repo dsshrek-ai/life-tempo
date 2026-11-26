@@ -102,13 +102,13 @@ await step('explode to the Wall: one tile per top-level task, in list order, sub
   const subs = await desk.locator('.tile').first().locator('.tile-sub .sw').allTextContents();
   assert.deepEqual(subs, ['Tree', 'Lights', 'Ornaments']);
   assert.equal(await desk.locator('.tile-sub.gc').count(), 2);
-  assert.ok(await desk.locator('.tile.over').count() === 1, 'overdue tile marked');
+  assert.ok(await desk.locator('.tile-wrap.over').count() === 1, 'overdue tile marked');
   await desk.screenshot({ path: `${SHOTS}/t2-wall.png`, fullPage: true });
 });
 
 await step('tap a tile to check it — it stays put, dimmed with a ✓; tap again to uncheck', async () => {
   await desk.click('.tile-main:has-text("Bake cookies")');
-  const tile = desk.locator('.tile', { hasText: 'Bake cookies' });
+  const tile = desk.locator('.tile-wrap', { hasText: 'Bake cookies' });
   await tile.locator('.check').waitFor();
   assert.match(await tile.getAttribute('class'), /done/);
   assert.deepEqual(await desk.locator('.tile .tw').allTextContents(), ['Decorate', 'Buy gifts', 'Bake cookies', 'Send cards', 'Mail packages']);
@@ -179,8 +179,9 @@ await step('phone: the Wall is two tiles across with no sideways scrolling', asy
   const phone = await newPage({ width: 390, height: 844 }, 'tok-dennis');
   await phone.goto(`${listUrl}&wall=1`);
   await phone.locator('.tile').first().waitFor();
+  // Tiles are tilted a little, so compare their tops loosely.
   const boxes = await phone.locator('.tile').evaluateAll(ts => ts.slice(0, 2).map(t => t.getBoundingClientRect().top));
-  assert.equal(Math.round(boxes[0]), Math.round(boxes[1]), 'first two tiles side by side');
+  assert.ok(Math.abs(boxes[0] - boxes[1]) < 12, 'first two tiles side by side');
   const overflow = await phone.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
   assert.ok(overflow <= 0, `${overflow}px wider than the phone`);
   await phone.screenshot({ path: `${SHOTS}/t4-phone-wall.png`, fullPage: true });

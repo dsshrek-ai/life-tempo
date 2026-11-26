@@ -52,12 +52,18 @@
   .wall-bar > div { height: 100%; background: var(--green); transition: width 0.3s; }
   .wall { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 0.8rem; }
   @media (max-width: 560px) { .wall { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.55rem; } }
-  .tile { position: relative; border-radius: 12px; border: 2px solid transparent; box-shadow: 0 2px 4px rgba(42, 27, 38, 0.12);
-    display: flex; flex-direction: column; min-height: 8.5rem; overflow: hidden; transition: opacity 0.2s, transform 0.1s; }
-  .tile.c0 { background: #fbe8ee; } .tile.c1 { background: #e9e2f5; } .tile.c2 { background: #e1f0e6; }
-  .tile.c3 { background: #fdf0d8; } .tile.c4 { background: #e0ecf6; } .tile.c5 { background: #f6e4dc; }
-  .tile.over { border-color: #a3302a; }
-  .tile.today { border-color: var(--amber); }
+  /* Paper torn from a pad: the wrapper casts the shadow (a clipped element can't), the tile
+     itself is clipped to a ragged top and bottom edge, and a strip of tape holds it up. */
+  .wall { padding-top: 0.6rem; row-gap: 1.3rem; }
+  .tile-wrap { position: relative; filter: drop-shadow(0 2px 2px rgba(42, 27, 38, 0.22)); transition: opacity 0.2s; }
+  .tile { position: relative; display: flex; flex-direction: column; min-height: 8.5rem; padding: 0.45rem 0 0.5rem;
+    background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0) 40%, rgba(0, 0, 0, 0.03)); }
+  .tile.c0 { background-color: #fbe8ee; } .tile.c1 { background-color: #e9e2f5; } .tile.c2 { background-color: #e1f0e6; }
+  .tile.c3 { background-color: #fdf0d8; } .tile.c4 { background-color: #e0ecf6; } .tile.c5 { background-color: #f6e4dc; }
+  .tape { position: absolute; z-index: 1; top: -0.55rem; left: 50%; width: 4.2rem; height: 1.15rem; transform: translateX(-50%) rotate(-3deg);
+    background: rgba(236, 226, 196, 0.85); box-shadow: 0 1px 1px rgba(0, 0, 0, 0.08); pointer-events: none; }
+  .tile-wrap.over .tape { background: rgba(196, 58, 50, 0.85); }
+  .tile-wrap.today .tape { background: rgba(214, 150, 50, 0.85); }
   .tile-main { flex: 1; display: block; width: 100%; text-align: left; background: none; border: none; cursor: pointer; font: inherit; color: var(--text);
     padding: 0.75rem 0.8rem 0.5rem; }
   .tile-main:active { transform: scale(0.98); }
@@ -73,7 +79,7 @@
   .tile-sub[aria-pressed="true"] .box { background: var(--primary); }
   .tile-sub[aria-pressed="true"] .sw { text-decoration: line-through; color: var(--muted); }
   .tile-count { font-size: 0.75rem; color: var(--muted); padding: 0 0.8rem 0.5rem; }
-  .tile.done { opacity: 0.55; }
+  .tile-wrap.done { opacity: 0.55; }
   .tile.done .tw { text-decoration: line-through; }
   .tile .check { position: absolute; top: 0.3rem; right: 0.5rem; font-size: 2.2rem; line-height: 1; color: var(--green); font-weight: 700; pointer-events: none; }
   .wall-empty { padding: 2rem 1rem; text-align: center; }
@@ -512,6 +518,25 @@ function wireList() {
 
 // ======================= The Wall =======================
 
+// The same "random" tear and tilt for a task every time (seeded by its id).
+function seeded(id) {
+  let x = (id * 2654435761) >>> 0;
+  return () => { x = (x ^ (x << 13)) >>> 0; x = (x ^ (x >>> 17)) >>> 0; x = (x ^ (x << 5)) >>> 0; return x / 4294967296; };
+}
+function tornEdge(id) {
+  const rnd = seeded(id);
+  const top = [];
+  const bottom = [];
+  for (let p = 0; p <= 100; p += 2.5) {
+    top.push(`${p}% ${(rnd() * 6).toFixed(1)}px`);
+    bottom.push(`${100 - p}% calc(100% - ${(rnd() * 7).toFixed(1)}px)`);
+  }
+  return `polygon(${[...top, ...bottom].join(', ')})`;
+}
+function tilt(id) {
+  return ((seeded(id + 7)() - 0.5) * 2.4).toFixed(2);
+}
+
 function renderWall() {
   document.title = `${LIST.Name} — Wall | Life Tempo`;
   document.getElementById('main').classList.add('wall-mode');
@@ -523,7 +548,9 @@ function renderWall() {
     const subs = kids.flatMap(k => [k, ...childrenOf(k.Id)]);
     const dc = dueClass(t);
     const meta = metaHtml(t);
-    return `<div class="tile c${i % 6}${t.Complete ? ' done' : ''}${dc ? ` ${dc}` : ''}" data-id="${t.Id}">
+    return `<div class="tile-wrap${t.Complete ? ' done' : ''}${dc ? ` ${dc}` : ''}" style="transform:rotate(${tilt(t.Id)}deg)">
+      <span class="tape" aria-hidden="true"></span>
+      <div class="tile c${i % 6}${t.Complete ? ' done' : ''}" data-id="${t.Id}" style="clip-path:${tornEdge(t.Id)}">
       <button type="button" class="tile-main" data-tile="${t.Id}" aria-pressed="${t.Complete}">
         <span class="tw">${escapeHtml(t.What)}</span>
         ${meta ? `<span class="tm">${meta}</span>` : ''}
@@ -532,7 +559,7 @@ function renderWall() {
         <span class="box" aria-hidden="true">${s.Complete ? '✓' : ''}</span><span class="sw">${escapeHtml(s.What)}</span></button></li>`).join('')}</ul>
         <div class="tile-count">${subs.filter(s => s.Complete).length} of ${subs.length} sub-tasks done</div>` : ''}
       ${t.Complete ? '<span class="check" aria-hidden="true">✓</span>' : ''}
-    </div>`;
+    </div></div>`;
   }).join('');
   contentEl.innerHTML = `
     <div class="wall-head">
