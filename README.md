@@ -65,6 +65,13 @@ still be edited by hand afterward for a flat fee or a one-off adjustment.
 - **The Wall** — "Explode to the Wall" shows one tile per top-level task in
   list order, sub-tasks inside. Tap to check; checked tiles stay in place,
   dimmed with a ✓. Tiles move only by moving the task in the list.
+- **Contact, Plan, Move / Copy, Print (2026-11-26)** — each task can carry a
+  contact name and phone with 📞 Call and 💬 Text buttons (on the list and on
+  its tile). ⋯ → **📅 Add to Plan** puts it on your own Plan (date and time
+  filled from the task; Where becomes the place; contact and notes go in the
+  notes). ⋯ → **Move / Copy** sends it, sub-tasks and all, to the bottom of
+  another list. **🖨 Print** prints the list with every branch open (or the
+  Wall as it looks).
 
 ## Next
 

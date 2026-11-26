@@ -553,6 +553,8 @@ CREATE TABLE IF NOT EXISTS lt_tasks (
   when_time     TIME NULL,
   who           VARCHAR(255) NULL,
   notes         TEXT NULL,
+  contact_name  VARCHAR(255) NULL,           -- added 2026-11-26: tap to call / text
+  contact_phone VARCHAR(40) NULL,
   complete      TINYINT(1) NOT NULL DEFAULT 0,
   completed_by  INT NULL,
   completed_at  TIMESTAMP NULL DEFAULT NULL,

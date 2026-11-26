@@ -11,6 +11,10 @@
 //
 // Included by api.php, which calls handleTaskAction() before its own router.
 // Guessed or unshared ids always answer "not found".
+//
+// Added 2026-11-26: a contact (name + phone, for tap-to-call/text), "Add to
+// Plan" (a planned event on the caller's own Plan), and move/copy a task --
+// with everything under it -- to another list the caller can reach.
 
 const TASK_ACTIONS = [
   'taskLists', 'taskList', 'taskListVersion',
@@ -18,6 +22,7 @@ const TASK_ACTIONS = [
   'shareTaskList', 'unshareTaskList',
   'addTask', 'updateTask', 'setTaskComplete', 'deleteTask',
   'indentTask', 'outdentTask', 'moveTask', 'clearCheckedTasks', 'restoreClearedTasks',
+  'moveTaskToList', 'addTaskToPlan',
 ];
 const TASK_MAX_DEPTH = 2;
 
@@ -139,6 +144,7 @@ function tkShapeTask(array $r): array {
     'What' => (string)$r['what'], 'Where' => (string)($r['where_text'] ?? ''),
     'WhenDate' => $r['when_date'], 'WhenTime' => $r['when_time'] !== null ? substr((string)$r['when_time'], 0, 5) : null,
     'Who' => (string)($r['who'] ?? ''), 'Notes' => (string)($r['notes'] ?? ''),
+    'ContactName' => (string)($r['contact_name'] ?? ''), 'ContactPhone' => (string)($r['contact_phone'] ?? ''),
     'Complete' => (bool)$r['complete'], 'CompletedBy' => $r['completed_name'] ?? null, 'CompletedAt' => $r['completed_at'],
     'Cleared' => $r['cleared_at'] !== null,
   ];
@@ -155,6 +161,14 @@ function tkTaskFields(array $b, bool $requireWhat): array {
   if (array_key_exists('where', $b)) { $out['where_text'] = tkText($b['where'], 255); }
   if (array_key_exists('who', $b)) { $out['who'] = tkText($b['who'], 255); }
   if (array_key_exists('notes', $b)) { $out['notes'] = tkText($b['notes'], 5000); }
+  if (array_key_exists('contactName', $b)) { $out['contact_name'] = tkText($b['contactName'], 255); }
+  if (array_key_exists('contactPhone', $b)) {
+    $ph = tkText($b['contactPhone'], 40);
+    if ($ph !== null && (!preg_match('/^[0-9+().\-\s#*xXet,;]+$/', $ph) || strlen(preg_replace('/\D/', '', $ph)) < 3)) {
+      fail('That phone number doesn\'t look right');
+    }
+    $out['contact_phone'] = $ph;
+  }
   if (array_key_exists('whenDate', $b)) {
     $d = tkText($b['whenDate'], 10);
     if ($d !== null && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $d)) { fail('That date doesn\'t look right'); }
@@ -166,6 +180,15 @@ function tkTaskFields(array $b, bool $requireWhat): array {
     $out['when_time'] = $t;
   }
   return $out;
+}
+
+/** Inserts a copy of task row $t (unchecked) on $listId; returns the new id. */
+function tkInsertCopy(array $t, int $listId, int $uid, ?int $parent, int $depth, int $sort): int {
+  return tkExec(
+    'INSERT INTO lt_tasks (list_id, created_by, parent_id, depth, sort_order, what, where_text, when_date, when_time, who, notes, contact_name, contact_phone)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', 'iiiiissssssss',
+    [$listId, $uid, $parent, $depth, $sort, $t['what'], $t['where_text'], $t['when_date'], $t['when_time'], $t['who'], $t['notes'],
+     $t['contact_name'] ?? null, $t['contact_phone'] ?? null]);
 }
 
 // ---- Sharing ----
@@ -259,10 +282,7 @@ function handleTaskAction(string $action, array $body): void {
         $parent = $old !== null && isset($map[$old]) ? $map[$old] : null;
         if ($old !== null && $parent === null) { continue; }   // under a cleared task: left out with it
         $depth = $parent === null ? 0 : $depths[$parent] + 1;
-        $nid = tkExec(
-          'INSERT INTO lt_tasks (list_id, created_by, parent_id, depth, sort_order, what, where_text, when_date, when_time, who, notes)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', 'iiiiissssss',
-          [$newId, $uid, $parent, $depth, (int)$t['sort_order'], $t['what'], $t['where_text'], $t['when_date'], $t['when_time'], $t['who'], $t['notes']]);
+        $nid = tkInsertCopy($t, $newId, $uid, $parent, $depth, (int)$t['sort_order']);
         $map[(int)$t['id']] = $nid;
         $depths[$nid] = $depth;
       }
@@ -305,10 +325,11 @@ function handleTaskAction(string $action, array $body): void {
       }
       $f = tkTaskFields($body, true);
       $id = tkExec(
-        'INSERT INTO lt_tasks (list_id, created_by, parent_id, depth, sort_order, what, where_text, when_date, when_time, who, notes)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', 'iiiiissssss',
+        'INSERT INTO lt_tasks (list_id, created_by, parent_id, depth, sort_order, what, where_text, when_date, when_time, who, notes, contact_name, contact_phone)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', 'iiiiissssssss',
         [$listId, $uid, $parentId, $depth, tkNextSort($listId, $parentId), $f['what'], $f['where_text'] ?? null,
-         $f['when_date'] ?? null, $f['when_time'] ?? null, $f['who'] ?? null, $f['notes'] ?? null]);
+         $f['when_date'] ?? null, $f['when_time'] ?? null, $f['who'] ?? null, $f['notes'] ?? null,
+         $f['contact_name'] ?? null, $f['contact_phone'] ?? null]);
       tkBump($listId);
       respond(['ok' => true, 'id' => $id]);
     }
@@ -421,6 +442,76 @@ function handleTaskAction(string $action, array $body): void {
       $n = tkExec('UPDATE lt_tasks SET cleared_at = NULL WHERE list_id = ? AND cleared_at IS NOT NULL', 'i', [(int)$list['id']]);
       tkBump((int)$list['id']);
       respond(['ok' => true, 'restored' => $n]);
+    }
+
+    // Sends a task and everything under it to the bottom of another list the
+    // caller can reach, as a top-level task there. Move keeps checks (and
+    // takes cleared sub-tasks along); copy makes fresh, unchecked tasks and
+    // leaves cleared ones behind.
+    case 'moveTaskToList': {
+      $task = tkTaskFor($uid, (int)($body['id'] ?? 0));
+      $from = (int)$task['list_id'];
+      $to = (int)tkListFor($uid, (int)($body['toListId'] ?? 0))['id'];
+      $copy = !empty($body['copy']);
+      if ($to === $from && !$copy) { fail('It\'s already on this list'); }
+      $id = (int)$task['id'];
+      $byId = tkTree($from);
+      $children = tkChildren($byId);
+      $shift = (int)$task['depth'];
+      $sort = tkNextSort($to, null);
+      db()->begin_transaction();
+      if ($copy) {
+        $map = [$id => tkInsertCopy($task, $to, $uid, null, 0, $sort)];
+        foreach (tkDescendants($children, $id) as $d) {   // parents always come before their children
+          if ($byId[$d]['cleared_at'] !== null || !isset($map[(int)$byId[$d]['parent_id']])) { continue; }
+          $row = tkRow('SELECT * FROM lt_tasks WHERE id = ?', 'i', [$d]);
+          $map[$d] = tkInsertCopy($row, $to, $uid, $map[(int)$row['parent_id']], (int)$row['depth'] - $shift, (int)$row['sort_order']);
+        }
+        $newId = $map[$id];
+      } else {
+        tkExec('UPDATE lt_tasks SET list_id = ?, parent_id = NULL, depth = 0, sort_order = ? WHERE id = ?', 'iii', [$to, $sort, $id]);
+        foreach (tkDescendants($children, $id) as $d) {
+          tkExec('UPDATE lt_tasks SET list_id = ?, depth = depth - ? WHERE id = ?', 'iii', [$to, $shift, $d]);
+        }
+        tkBump($from);
+        $newId = $id;
+      }
+      tkBump($to);
+      db()->commit();
+      respond(['ok' => true, 'id' => $newId]);
+    }
+
+    // Puts the task on the caller's own Plan (lt_planned_events). Plan needs
+    // a date and a start time; the page fills them in from the task. "Where"
+    // becomes the event's place -- an existing saved location with that name,
+    // or a new one, the same as typing a place on the Plan page.
+    case 'addTaskToPlan': {
+      $task = tkTaskFor($uid, (int)($body['id'] ?? 0));
+      $date = trim((string)($body['date'] ?? ''));
+      $time = trim((string)($body['time'] ?? ''));
+      if ($date === '' || $time === '') { fail('Plan needs a date and a start time'); }
+      $title = mb_substr((string)$task['what'], 0, 200);
+      $start = requireDateTime($date, $time, 'start');
+      $dupe = tkRow("SELECT id FROM lt_planned_events WHERE user_id = ? AND title = ? AND start_datetime = ? AND status = 'Planned'",
+        'iss', [$uid, $title, $start]);
+      if ($dupe) { fail('That\'s already on your Plan at that time', 409); }
+      $notes = [];
+      if ($task['contact_name'] || $task['contact_phone']) {
+        $notes[] = 'Contact: ' . trim(($task['contact_name'] ?? '') . ' ' . ($task['contact_phone'] ?? ''));
+      }
+      if ($task['who']) { $notes[] = 'Who: ' . $task['who']; }
+      if ($task['notes']) { $notes[] = $task['notes']; }
+      $list = tkRow('SELECT name FROM lt_task_lists WHERE id = ?', 'i', [(int)$task['list_id']]);
+      $notes[] = 'From task list: ' . $list['name'];
+      $event = ['title' => $title, 'startDate' => $date, 'startTime' => $time,
+        'endTime' => trim((string)($body['endTime'] ?? '')), 'notes' => mb_substr(implode("\n", $notes), 0, 1000)];
+      $where = trim((string)($task['where_text'] ?? ''));
+      if ($where !== '') {
+        $loc = tkRow('SELECT id FROM lt_locations WHERE user_id = ? AND LOWER(name) = LOWER(?) ORDER BY id LIMIT 1', 'is', [$uid, $where]);
+        if ($loc) { $event['locationId'] = (int)$loc['id']; } else { $event['newLocation'] = ['name' => $where, 'address' => '']; }
+      }
+      $eventId = addPlannedEvent($uid, $event);
+      respond(['ok' => true, 'eventId' => $eventId]);
     }
   }
 }

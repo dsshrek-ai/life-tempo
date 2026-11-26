@@ -83,7 +83,33 @@
   .tile.done .tw { text-decoration: line-through; }
   .tile .check { position: absolute; top: 0.3rem; right: 0.5rem; font-size: 2.2rem; line-height: 1; color: var(--green); font-weight: 700; pointer-events: none; }
   .wall-empty { padding: 2rem 1rem; text-align: center; }
-  @media print { header.site-header, .toolbar, .no-print { display: none !important; } }
+
+  /* Contact: tap the buttons to call or text */
+  .t-contact { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem 0.5rem; font-size: 0.85rem; margin-top: 0.15rem; }
+  .t-contact a.num, .tile-contact a.num { color: var(--primary-dark); }
+  .call-btn { display: inline-flex; align-items: center; gap: 0.2rem; padding: 0.15rem 0.6rem; border-radius: 999px; font-size: 0.82rem; text-decoration: none;
+    border: 1px solid var(--border); background: var(--surface); color: var(--primary-dark); min-height: 1.9rem; }
+  .call-btn:hover { border-color: var(--accent); }
+  .tile-contact { display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: center; padding: 0 0.8rem 0.5rem; font-size: 0.78rem; color: var(--muted); }
+  .tile-contact .call-btn { background: rgba(255, 255, 255, 0.7); min-height: 1.7rem; padding: 0.1rem 0.5rem; }
+  .t-form h4 { margin: 0 0 0.3rem; }
+  .print-only { display: none; }
+
+  /* Print: everything expanded, no buttons; checkboxes and phone numbers stay */
+  @media print {
+    header.site-header, footer.site-footer, .toolbar, .no-print, .t-more, .t-actions, .t-form, .call-btn { display: none !important; }
+    .print-only { display: block; }
+    body, main { background: #fff !important; }
+    main { max-width: none; padding: 0; }
+    .card { border: none; box-shadow: none; padding: 0; }
+    .t-toggle { visibility: hidden; width: 0.5rem; min-width: 0.5rem; }
+    .task { break-inside: avoid; }
+    .task-row { padding: 0.3rem 0; }
+    .t-contact a.num { color: inherit; text-decoration: none; }
+    .tile, .tape, .wall-bar > div { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .wall { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .tile-wrap { break-inside: avoid; }
+  }
 </style>
 </head>
 <body>
@@ -133,6 +159,8 @@ let openForm = null;      // { kind: 'edit' | 'sub', id }
 let showDetails = false;  // the "more details" part of the add form
 let showPeople = false;
 let pollTimer = null;
+let printing = false;     // while printing, every branch is open and buttons are hidden
+let OTHER_LISTS = null;   // for Move / Copy: [{ Id, Name }], loaded when first needed
 
 function showStatus(msg) {
   if (!msg) { statusEl.style.display = 'none'; return; }
@@ -204,6 +232,23 @@ function metaHtml(t) {
   return bits.join(' · ');
 }
 
+// ---- Contact: tap to call or text ----
+// "555-123-4567 x12" -> tel:5551234567,12 (the comma waits, then dials the extension).
+function telHref(phone) {
+  return 'tel:' + phone.replace(/\s*(ext\.?|x)\s*/i, ',').replace(/[^\d+,*#]/g, '');
+}
+function smsHref(phone) {
+  return 'sms:' + phone.split(/\s*(?:ext\.?|x)\s*/i)[0].replace(/[^\d+]/g, '');
+}
+function contactHtml(t, cls) {
+  if (!t.ContactName && !t.ContactPhone) { return ''; }
+  const name = t.ContactName ? escapeHtml(t.ContactName) : '';
+  if (!t.ContactPhone) { return `<div class="${cls}">☎ ${name}</div>`; }
+  return `<div class="${cls}">☎ ${name}${name ? ' · ' : ''}<a class="num" href="${attr(telHref(t.ContactPhone))}">${escapeHtml(t.ContactPhone)}</a>
+    <a class="call-btn" href="${attr(telHref(t.ContactPhone))}" aria-label="Call ${attr(t.ContactName || t.ContactPhone)}">📞 Call</a>
+    <a class="call-btn" href="${attr(smsHref(t.ContactPhone))}" aria-label="Text ${attr(t.ContactName || t.ContactPhone)}">💬 Text</a></div>`;
+}
+
 // ---- Tree: what's visible (cleared tasks and everything under them are hidden) ----
 function visibleTree() {
   const kids = new Map();
@@ -258,7 +303,40 @@ async function renderOverview() {
 
 // ======================= One list =======================
 
+function planFormHtml(t) {
+  return `<form class="t-form" data-form="plan" novalidate>
+    <h4>📅 Add to your Plan</h4>
+    <div class="form-grid">
+      <div><label for="p-date" style="margin-top:0">Date</label><input type="date" id="p-date" value="${attr(t.WhenDate || todayIso())}"></div>
+      <div><label for="p-time" style="margin-top:0">Start time</label><input type="time" id="p-time" value="${attr(t.WhenTime || '')}"></div>
+      <div><label for="p-end" style="margin-top:0">End time (optional)</label><input type="time" id="p-end"></div>
+    </div>
+    <p class="t-meta">It goes on your own Plan as "${escapeHtml(t.What)}"${t.Where ? `, at ${escapeHtml(t.Where)}` : ''}. The contact and notes go with it.</p>
+    <div class="err" role="alert"></div>
+    <div class="toolbar"><button type="submit" class="btn small">Add to Plan</button>
+      <button type="button" class="btn small secondary" data-cancel>Cancel</button></div>
+  </form>`;
+}
+
+function moveFormHtml(t) {
+  const kids = TASKS.some(x => x.ParentId === t.Id);
+  const lists = OTHER_LISTS;
+  return `<form class="t-form" data-form="move" novalidate>
+    <h4>Move or copy${kids ? ' (with its sub-tasks)' : ''}</h4>
+    ${lists === null ? '<p class="t-meta">Loading your lists…</p>'
+      : `<label for="m-list" style="margin-top:0">To list</label>
+      <select id="m-list">${lists.map(l => `<option value="${l.Id}">${escapeHtml(l.Name)}${l.Mine ? '' : ` (${escapeHtml(l.OwnerName)}'s)`}${l.Id === LIST.Id ? ' — this list' : ''}</option>`).join('')}</select>
+      <p class="t-meta">It goes to the bottom of that list. Move keeps what's checked; Copy starts fresh and leaves this one here.</p>`}
+    <div class="err" role="alert"></div>
+    <div class="toolbar">${lists ? `<button type="submit" class="btn small" data-mode="move">Move</button>
+      <button type="submit" class="btn small secondary" data-mode="copy">Copy</button>` : ''}
+      <button type="button" class="btn small secondary" data-cancel>Cancel</button></div>
+  </form>`;
+}
+
 function taskFormHtml(t, kind) {
+  if (kind === 'plan') { return planFormHtml(t); }
+  if (kind === 'move') { return moveFormHtml(t); }
   const v = t || {};
   return `<form class="t-form" data-form="${kind}" novalidate>
     <label for="f-what" style="margin-top:0">${kind === 'sub' ? 'New sub-task' : 'What'}</label>
@@ -268,6 +346,8 @@ function taskFormHtml(t, kind) {
       <div><label for="f-time">Time</label><input type="time" id="f-time" value="${attr(v.WhenTime || '')}"></div>
       <div><label for="f-who">Who</label><input type="text" id="f-who" maxlength="255" value="${attr(v.Who || '')}"></div>
       <div><label for="f-where">Where</label><input type="text" id="f-where" maxlength="255" value="${attr(v.Where || '')}"></div>
+      <div><label for="f-cname">Contact name</label><input type="text" id="f-cname" maxlength="255" value="${attr(v.ContactName || '')}"></div>
+      <div><label for="f-cphone">Contact phone</label><input type="tel" id="f-cphone" maxlength="40" value="${attr(v.ContactPhone || '')}"></div>
     </div>
     <label for="f-notes">Notes</label><textarea id="f-notes" maxlength="5000">${escapeHtml(v.Notes || '')}</textarea>` : ''}
     <div class="err" role="alert"></div>
@@ -278,7 +358,7 @@ function taskFormHtml(t, kind) {
 
 function taskHtml(t, childrenOf, folded) {
   const kids = childrenOf(t.Id);
-  const isFolded = folded.has(t.Id);
+  const isFolded = folded.has(t.Id) && !printing;
   const doneKids = kids.filter(k => k.Complete).length;
   return `<div class="task depth-${t.Depth}" data-id="${t.Id}">
     <div class="task-row${t.Complete ? ' done' : ''}">
@@ -287,21 +367,24 @@ function taskHtml(t, childrenOf, folded) {
       <div class="t-body">
         <div class="t-what">${escapeHtml(t.What)}${kids.length ? ` <span class="t-meta">(${doneKids}/${kids.length})</span>` : ''}</div>
         ${metaHtml(t) ? `<div class="t-meta">${metaHtml(t)}</div>` : ''}
+        ${contactHtml(t, 't-contact')}
         ${t.Notes ? `<div class="t-notes">${escapeHtml(t.Notes)}</div>` : ''}
         ${t.Complete && t.CompletedBy && LIST.Members.length > 1 ? `<div class="t-meta">✓ ${escapeHtml(t.CompletedBy)}</div>` : ''}
       </div>
       <button type="button" class="t-more" data-more aria-expanded="${openActions === t.Id}" aria-label="More for ${attr(t.What)}">⋯</button>
     </div>
-    ${openActions === t.Id ? `<div class="t-actions">
+    ${openActions === t.Id && !printing ? `<div class="t-actions">
       ${t.Depth < 2 ? '<button type="button" class="btn small secondary" data-act="sub">+ Sub-task</button>' : ''}
       <button type="button" class="btn small secondary" data-act="edit">Edit</button>
+      <button type="button" class="btn small secondary" data-act="plan">📅 Add to Plan</button>
+      <button type="button" class="btn small secondary" data-act="move">Move / Copy</button>
       <button type="button" class="btn small secondary" data-act="up" aria-label="Move up">↑</button>
       <button type="button" class="btn small secondary" data-act="down" aria-label="Move down">↓</button>
       <button type="button" class="btn small secondary" data-act="indent" aria-label="Make it a sub-task of the one above">→</button>
       ${t.Depth > 0 ? '<button type="button" class="btn small secondary" data-act="outdent" aria-label="Move it out a level">←</button>' : ''}
       <button type="button" class="btn small secondary" data-act="delete">Delete</button>
     </div>` : ''}
-    ${openForm && openForm.id === t.Id ? taskFormHtml(openForm.kind === 'edit' ? t : null, openForm.kind) : ''}
+    ${openForm && openForm.id === t.Id && !printing ? taskFormHtml(openForm.kind === 'sub' ? null : t, openForm.kind) : ''}
     ${isFolded ? '' : kids.map(k => taskHtml(k, childrenOf, folded)).join('')}
   </div>`;
 }
@@ -313,7 +396,8 @@ function renderList() {
   const sameForm = formKey && formKey === renderList.formKey;
   renderList.formKey = formKey;
   const keep = ['a-what', 'a-date', 'a-time', 'a-who', 'a-where', 'a-notes', 'share-email',
-    ...(sameForm ? ['f-what', 'f-date', 'f-time', 'f-who', 'f-where', 'f-notes'] : [])]
+    'a-cname', 'a-cphone',
+    ...(sameForm ? ['f-what', 'f-date', 'f-time', 'f-who', 'f-where', 'f-notes', 'f-cname', 'f-cphone', 'p-date', 'p-time', 'p-end', 'm-list'] : [])]
     .map(id => [id, document.getElementById(id)]).filter(([, el]) => el).map(([id, el]) => [id, el.value]);
   const focusId = document.activeElement && document.activeElement.id;
   const { top, childrenOf } = visibleTree();
@@ -326,14 +410,16 @@ function renderList() {
     <p class="no-print"><a href="tasks.html">← All task lists</a></p>
     <div class="list-head">
       <h2>${escapeHtml(LIST.Name)}</h2>
-      <a class="btn accent" href="tasks.html?list=${LIST.Id}&wall=1">🧱 Explode to the Wall</a>
+      <a class="btn accent no-print" href="tasks.html?list=${LIST.Id}&wall=1">🧱 Explode to the Wall</a>
     </div>
+    <p class="print-only t-meta">Printed ${escapeHtml(new Date().toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }))}</p>
     <p class="progress-line">${all.length ? `${done} of ${all.length} done` : 'No tasks yet'}${others.length ? ` · ${LIST.Mine ? 'Shared with ' + others.map(m => escapeHtml(m.Name)).join(', ') : 'Shared by ' + escapeHtml(LIST.Members[0].Name)}` : ''}</p>
     <div class="toolbar no-print">
       <button type="button" class="btn small secondary" id="people-btn" aria-expanded="${showPeople}">👥 ${LIST.Mine ? 'Share' : 'People'}</button>
       ${done ? '<button type="button" class="btn small secondary" id="clear-btn">Clear checked</button>' : ''}
       ${cleared ? `<button type="button" class="btn small secondary" id="restore-btn">Restore ${cleared} cleared</button>` : ''}
       <button type="button" class="btn small secondary" id="dup-btn">Duplicate</button>
+      <button type="button" class="btn small secondary" id="print-btn">🖨 Print</button>
       ${LIST.Mine ? '<button type="button" class="btn small secondary" id="rename-btn">Rename</button><button type="button" class="btn small secondary" id="del-list-btn">Delete list</button>' : ''}
     </div>
     ${showPeople ? peopleHtml() : ''}
@@ -343,12 +429,14 @@ function renderList() {
           <input type="text" id="a-what" maxlength="500" placeholder="Add a task…" aria-label="New task">
           <button type="submit" class="btn">Add</button>
         </div>
-        <button type="button" class="link-btn btn small secondary" id="a-more" aria-expanded="${showDetails}" style="margin-top:0.5rem">${showDetails ? 'Fewer details' : 'More details (when, who, where, notes)'}</button>
+        <button type="button" class="link-btn btn small secondary" id="a-more" aria-expanded="${showDetails}" style="margin-top:0.5rem">${showDetails ? 'Fewer details' : 'More details (when, who, where, contact, notes)'}</button>
         ${showDetails ? `<div class="form-grid">
           <div><label for="a-date">When (date)</label><input type="date" id="a-date"></div>
           <div><label for="a-time">Time</label><input type="time" id="a-time"></div>
           <div><label for="a-who">Who</label><input type="text" id="a-who" maxlength="255"></div>
           <div><label for="a-where">Where</label><input type="text" id="a-where" maxlength="255"></div>
+          <div><label for="a-cname">Contact name</label><input type="text" id="a-cname" maxlength="255"></div>
+          <div><label for="a-cphone">Contact phone</label><input type="tel" id="a-cphone" maxlength="40"></div>
         </div>
         <label for="a-notes">Notes</label><textarea id="a-notes" maxlength="5000"></textarea>` : ''}
         <div class="err" id="a-err" role="alert"></div>
@@ -385,6 +473,18 @@ async function change(action, payload, msg) {
   await loadList();
 }
 
+// Move to: any other list. Copy to: any list, this one included.
+async function loadOtherLists() {
+  try {
+    const { lists } = await tGet('taskLists');
+    OTHER_LISTS = [...lists.filter(l => l.Id !== LIST.Id), ...lists.filter(l => l.Id === LIST.Id)];
+  } catch (e) {
+    OTHER_LISTS = [];
+    showStatus(e.message);
+  }
+  if (openForm && openForm.kind === 'move') { renderList(); }
+}
+
 function wireList() {
   const tree = document.getElementById('tree');
   const byId = id => TASKS.find(t => t.Id === id);
@@ -414,6 +514,14 @@ function wireList() {
         if (act === 'sub') { const set = collapsed(); set.delete(id); setCollapsed(set); }
         renderList();
         document.getElementById('f-what').focus();
+      } else if (act === 'plan') {
+        openForm = { kind: 'plan', id };
+        renderList();
+        document.getElementById(t.WhenTime ? 'p-date' : 'p-time').focus();
+      } else if (act === 'move') {
+        openForm = { kind: 'move', id };
+        renderList();
+        loadOtherLists();
       } else if (act === 'up' || act === 'down') {
         change('moveTask', { id, direction: act });
       } else if (act === 'indent') {
@@ -429,6 +537,38 @@ function wireList() {
     const form = el.querySelector(':scope > form[data-form]');
     if (form) {
       form.querySelector('[data-cancel]').addEventListener('click', () => { openForm = null; renderList(); });
+      if (form.dataset.form === 'plan') {
+        form.addEventListener('submit', async ev => {
+          ev.preventDefault();
+          try {
+            await tPost('addTaskToPlan', { id, date: form.querySelector('#p-date').value, time: form.querySelector('#p-time').value,
+              endTime: form.querySelector('#p-end').value });
+            openForm = null;
+            openActions = null;
+            renderList();
+            showStatus(`"${t.What}" is on your Plan`);
+          } catch (e) { form.querySelector('.err').textContent = e.message; }
+        });
+        return;
+      }
+      if (form.dataset.form === 'move') {
+        form.addEventListener('submit', async ev => {
+          ev.preventDefault();
+          const sel = form.querySelector('#m-list');
+          if (!sel) { return; }
+          const copy = ev.submitter ? ev.submitter.dataset.mode === 'copy' : false;
+          const target = OTHER_LISTS.find(l => l.Id === Number(sel.value));
+          try {
+            await tPost('moveTaskToList', { id, toListId: target.Id, copy });
+            openForm = null;
+            openActions = null;
+            OTHER_LISTS = null;
+            showStatus(`${copy ? 'Copied' : 'Moved'} to "${target.Name}"`);
+            await loadList();
+          } catch (e) { form.querySelector('.err').textContent = e.message; }
+        });
+        return;
+      }
       form.addEventListener('submit', async ev => {
         ev.preventDefault();
         const what = form.querySelector('#f-what').value;
@@ -438,7 +578,8 @@ function wireList() {
             form.querySelector('#f-what').value = '';
           } else {
             await tPost('updateTask', { id, what, whenDate: form.querySelector('#f-date').value, whenTime: form.querySelector('#f-time').value,
-              who: form.querySelector('#f-who').value, where: form.querySelector('#f-where').value, notes: form.querySelector('#f-notes').value });
+              who: form.querySelector('#f-who').value, where: form.querySelector('#f-where').value, notes: form.querySelector('#f-notes').value,
+              contactName: form.querySelector('#f-cname').value, contactPhone: form.querySelector('#f-cphone').value });
             openForm = null;
             openActions = null;
           }
@@ -458,7 +599,7 @@ function wireList() {
     const val = id => (document.getElementById(id) ? document.getElementById(id).value : '');
     try {
       await tPost('addTask', { listId: LIST.Id, what: val('a-what'), whenDate: val('a-date'), whenTime: val('a-time'),
-        who: val('a-who'), where: val('a-where'), notes: val('a-notes') });
+        who: val('a-who'), where: val('a-where'), notes: val('a-notes'), contactName: val('a-cname'), contactPhone: val('a-cphone') });
       document.querySelectorAll('#add-task input, #add-task textarea').forEach(el => { el.value = ''; });
       document.getElementById('a-err').textContent = '';
       await loadList();
@@ -468,6 +609,7 @@ function wireList() {
 
   document.getElementById('people-btn').addEventListener('click', () => { showPeople = !showPeople; renderList(); });
   const on = (id, fn) => { const el = document.getElementById(id); if (el) { el.addEventListener('click', fn); } };
+  on('print-btn', () => window.print());
   on('clear-btn', () => change('clearCheckedTasks', { listId: LIST.Id }, 'Checked tasks cleared — Restore brings them back'));
   on('restore-btn', () => change('restoreClearedTasks', { listId: LIST.Id }, 'Restored'));
   on('dup-btn', async () => {
@@ -555,6 +697,7 @@ function renderWall() {
         <span class="tw">${escapeHtml(t.What)}</span>
         ${meta ? `<span class="tm">${meta}</span>` : ''}
       </button>
+      ${contactHtml(t, 'tile-contact')}
       ${subs.length ? `<ul class="tile-subs">${subs.map(s => `<li><button type="button" class="tile-sub${s.Depth === 2 ? ' gc' : ''}" data-tile="${s.Id}" aria-pressed="${s.Complete}">
         <span class="box" aria-hidden="true">${s.Complete ? '✓' : ''}</span><span class="sw">${escapeHtml(s.What)}</span></button></li>`).join('')}</ul>
         <div class="tile-count">${subs.filter(s => s.Complete).length} of ${subs.length} sub-tasks done</div>` : ''}
@@ -564,6 +707,7 @@ function renderWall() {
   contentEl.innerHTML = `
     <div class="wall-head">
       <h2>🧱 ${escapeHtml(LIST.Name)}</h2>
+      <button type="button" class="btn secondary small no-print" id="wall-print">🖨 Print</button>
       <a class="btn secondary small no-print" href="tasks.html?list=${LIST.Id}">← Back to the list</a>
     </div>
     <p class="progress-line" style="margin:0">${all.length ? `${done} of ${all.length} done — tap a tile to check it off` : ''}</p>
@@ -572,6 +716,7 @@ function renderWall() {
       <p class="t-meta no-print" style="margin-top:1rem">Tiles follow the list's order. To move a tile, move its task up or down in the list.</p>`
     : `<div class="card wall-empty"><p>Nothing on this list yet.</p><p><a href="tasks.html?list=${LIST.Id}">Add tasks</a></p></div>`}`;
 
+  document.getElementById('wall-print').addEventListener('click', () => window.print());
   document.querySelectorAll('[data-tile]').forEach(b => b.addEventListener('click', async () => {
     const t = TASKS.find(x => x.Id === Number(b.dataset.tile));
     t.Complete = !t.Complete;
@@ -618,6 +763,13 @@ function startPolling() {
     } catch (e) { /* offline for a moment: try again next time */ }
   }, 10000);
 }
+
+window.addEventListener('beforeprint', () => {
+  if (LIST && !wallMode) { printing = true; renderList(); }
+});
+window.addEventListener('afterprint', () => {
+  if (printing) { printing = false; renderList(); }
+});
 
 (async () => {
   await captureSso();

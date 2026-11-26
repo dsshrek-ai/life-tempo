@@ -229,6 +229,17 @@ email, and **Explode to the Wall** shows a list as tiles you tap to check off.
    it in `seniorfamily.org/life-tempo-api/`.
 3. Push the front end (new `tasks.html`; every page's menu gained a Tasks link).
 
-Tests: `tests/tasks.test.mjs` (14 API checks) and `tests/ui-tasks.mjs`
-(12 browser steps) — see the comments at the top of each for the throwaway
+Tests: `tests/tasks.test.mjs` (19 API checks) and `tests/ui-tasks.mjs`
+(16 browser steps) — see the comments at the top of each for the throwaway
 database they need.
+
+## Task contacts, Add to Plan, Move / Copy, Print (2026-11-26)
+
+1. Database — only one of these:
+   - **Haven't run `api/tasks-schema.sql` yet?** Run it now; it already has
+     the new contact columns. Skip the next line.
+   - **Already ran it?** Run **`api/tasks-update-2026-11-26.sql`** once (adds
+     `contact_name` and `contact_phone` to `lt_tasks`).
+2. Upload `api/tasks.php` (replace) to `seniorfamily.org/life-tempo-api/`.
+   `api/api.php` is unchanged since the Tasks update.
+3. Push the front end (`tasks.html`).

@@ -175,6 +175,74 @@ await step('clear checked hides them on the list and Wall; restore brings them b
   await row(desk, 'Send cards').waitFor();
 });
 
+await step('contact: name and phone on the list and the Wall, with Call and Text', async () => {
+  await desk.goto(listUrl);
+  await act(desk, 'Mail packages', 'edit');
+  await desk.fill('#f-cname', 'Post office');
+  await desk.fill('#f-cphone', 'not a number');
+  await desk.locator('form[data-form="edit"] button[type="submit"]').click();
+  await desk.locator('form[data-form="edit"] .err', { hasText: 'phone number' }).waitFor();
+  await desk.fill('#f-cphone', '(555) 123-4567 x12');
+  await desk.locator('form[data-form="edit"] button[type="submit"]').click();
+  const c = row(desk, 'Mail packages').locator(':scope > .task-row .t-contact');
+  await c.waitFor();
+  assert.equal(await c.locator('a', { hasText: 'Call' }).getAttribute('href'), 'tel:5551234567,12');
+  assert.equal(await c.locator('a', { hasText: 'Text' }).getAttribute('href'), 'sms:5551234567');
+  await desk.goto(`${listUrl}&wall=1`);
+  const tc = desk.locator('.tile-wrap', { hasText: 'Mail packages' }).locator('.tile-contact');
+  await tc.waitFor();
+  assert.match(await tc.textContent(), /Post office/);
+  // Tapping Call/Text on a tile must not check the tile.
+  await tc.locator('a', { hasText: 'Text' }).evaluate(a => { a.addEventListener('click', e => e.preventDefault()); a.click(); });
+  assert.equal(await desk.locator('.tile-wrap.done', { hasText: 'Mail packages' }).count(), 0);
+  await desk.screenshot({ path: `${SHOTS}/t6-wall-contact.png`, fullPage: true });
+});
+
+await step('add to Plan: date and time filled from the task; it shows on the Plan page', async () => {
+  await desk.goto(listUrl);
+  await act(desk, 'Bake cookies', 'plan');
+  assert.equal(await desk.inputValue('#p-date'), await desk.evaluate(() => todayIso()), 'no date on the task: today');
+  await desk.locator('form[data-form="plan"] button[type="submit"]').click();
+  await desk.locator('form[data-form="plan"] .err', { hasText: 'start time' }).waitFor();
+  await desk.fill('#p-date', '2026-12-20');
+  await desk.fill('#p-time', '14:00');
+  await desk.fill('#p-end', '16:00');
+  await desk.screenshot({ path: `${SHOTS}/t7-add-to-plan.png`, fullPage: true });
+  await desk.locator('form[data-form="plan"] button[type="submit"]').click();
+  await desk.locator('#status', { hasText: 'is on your Plan' }).waitFor();
+  assert.equal(await desk.locator('form[data-form="plan"]').count(), 0);
+  // The same again is refused.
+  await act(desk, 'Bake cookies', 'plan');
+  await desk.fill('#p-date', '2026-12-20');
+  await desk.fill('#p-time', '14:00');
+  await desk.locator('form[data-form="plan"] button[type="submit"]').click();
+  await desk.locator('form[data-form="plan"] .err', { hasText: 'already on your Plan' }).waitFor();
+  await desk.click('form[data-form="plan"] [data-cancel]');
+  await desk.goto(`${BASE}/plan.html`);
+  await desk.locator('text=Bake cookies').first().waitFor();
+});
+
+await step('print: every branch opens, buttons and forms hide, then it goes back', async () => {
+  await desk.goto(listUrl);
+  await row(desk, 'Decorate').locator(':scope > .task-row [data-fold]').click();
+  assert.equal(await desk.locator('.t-what', { hasText: 'Lights' }).count(), 0);
+  await desk.evaluate(() => window.dispatchEvent(new Event('beforeprint')));
+  await desk.emulateMedia({ media: 'print' });
+  await row(desk, 'Lights').waitFor();
+  assert.equal(await desk.locator('#add-task').isVisible(), false);
+  assert.equal(await desk.locator('.t-more').first().isVisible(), false);
+  assert.equal(await desk.locator('.call-btn').first().isVisible(), false);
+  assert.ok(await desk.locator('.print-only', { hasText: 'Printed' }).isVisible());
+  assert.ok(await desk.locator('.t-contact a.num').isVisible(), 'the phone number itself still prints');
+  assert.equal(await desk.locator('.btn.accent', { hasText: 'Explode' }).isVisible(), false);
+  if (SHOTS) { await desk.screenshot({ path: `${SHOTS}/t8-print.png`, fullPage: true }); }
+  await desk.emulateMedia({ media: 'screen' });
+  await desk.evaluate(() => window.dispatchEvent(new Event('afterprint')));
+  assert.equal(await desk.locator('.t-what', { hasText: 'Lights' }).count(), 0, 'back to collapsed');
+  await row(desk, 'Decorate').locator(':scope > .task-row [data-fold]').click();
+  await row(desk, 'Lights').waitFor();
+});
+
 await step('phone: the Wall is two tiles across with no sideways scrolling', async () => {
   const phone = await newPage({ width: 390, height: 844 }, 'tok-dennis');
   await phone.goto(`${listUrl}&wall=1`);
@@ -191,6 +259,31 @@ await step('phone: the Wall is two tiles across with no sideways scrolling', asy
   assert.ok(overflow2 <= 0, `list: ${overflow2}px wider than the phone`);
   await phone.screenshot({ path: `${SHOTS}/t5-phone-list.png`, fullPage: true });
   await phone.context().close();
+});
+
+await step('move a task (with its sub-task) to another list, and copy one back', async () => {
+  await desk.goto(listUrl);
+  await row(desk, 'Decorate').waitFor();
+  await desk.evaluate(() => tPost('addTaskList', { name: 'Shopping' }));
+  await act(desk, 'Buy gifts', 'move');
+  await desk.locator('#m-list').waitFor();
+  const options = await desk.locator('#m-list option').allTextContents();
+  assert.equal(options[0], 'Shopping');
+  assert.match(options[options.length - 1], /this list/);
+  await desk.selectOption('#m-list', { label: 'Shopping' });
+  await desk.click('form[data-form="move"] button[data-mode="move"]');
+  await desk.locator('#status', { hasText: 'Moved to "Shopping"' }).waitFor();
+  assert.equal(await desk.locator('.t-what', { hasText: 'Grandkids' }).count(), 0, 'its sub-task went with it');
+  await desk.goto(`${BASE}/tasks.html`);
+  await desk.click('.list-card:has-text("Shopping")');
+  await row(desk, 'Grandkids').waitFor();
+  await act(desk, 'Buy gifts', 'move');
+  await desk.selectOption('#m-list', { label: 'Christmas prep' });
+  await desk.click('form[data-form="move"] button[data-mode="copy"]');
+  await desk.locator('#status', { hasText: 'Copied' }).waitFor();
+  await row(desk, 'Buy gifts').waitFor();   // the copy leaves this one here
+  await desk.goto(listUrl);
+  await row(desk, 'Grandkids').waitFor();
 });
 
 await step('duplicate, then delete the copy', async () => {

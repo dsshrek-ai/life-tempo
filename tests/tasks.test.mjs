@@ -167,6 +167,80 @@ await test('a member leaves; then the owner deletes the list', async () => {
   assert.equal((await get('dennis', 'taskList', { id: list })).status, 404);
 });
 
+// ---- Added 2026-11-26: contact, move/copy to another list, add to Plan ----
+const ids2 = {};
+let listA = 0;
+let listB = 0;
+
+await test('a contact name and phone are saved; a bad phone is refused', async () => {
+  listA = (await call('dennis', 'addTaskList', { name: 'House' })).data.id;
+  listB = (await call('dennis', 'addTaskList', { name: 'Errands' })).data.id;
+  const r = await call('dennis', 'addTask', { listId: listA, what: 'Fix the gutter', contactName: 'Bob Roofer', contactPhone: '(555) 123-4567 x12',
+    where: 'Back of the house', whenDate: '2026-12-03', whenTime: '10:00', notes: 'Ladder in garage' });
+  assert.equal(r.status, 200);
+  ids2.gutter = r.data.id;
+  assert.equal((await call('dennis', 'updateTask', { id: ids2.gutter, contactPhone: 'call me maybe' })).status, 400);
+  const g = byWhat(await tasksOf('dennis', listA), 'Fix the gutter');
+  assert.deepEqual([g.ContactName, g.ContactPhone], ['Bob Roofer', '(555) 123-4567 x12']);
+  ids2.buy = (await call('dennis', 'addTask', { listId: listA, parentId: ids2.gutter, what: 'Buy brackets' })).data.id;
+  ids2.size = (await call('dennis', 'addTask', { listId: listA, parentId: ids2.buy, what: 'Check the size' })).data.id;
+  await call('dennis', 'setTaskComplete', { id: ids2.size, complete: true });
+});
+
+await test('copy a task with sub-tasks to another list: fresh, unchecked, same shape, contact kept', async () => {
+  const r = await call('dennis', 'moveTaskToList', { id: ids2.gutter, toListId: listB, copy: true });
+  assert.equal(r.status, 200);
+  const b = await tasksOf('dennis', listB);
+  assert.equal(b.length, 3);
+  assert.ok(b.every(t => !t.Complete));
+  assert.equal(byWhat(b, 'Fix the gutter').ContactPhone, '(555) 123-4567 x12');
+  assert.equal(byWhat(b, 'Check the size').ParentId, byWhat(b, 'Buy brackets').Id);
+  assert.equal((await tasksOf('dennis', listA)).length, 3, 'the original stays put');
+});
+
+await test('move a sub-task to another list: it becomes top-level there, its child moves with it and keeps its check', async () => {
+  const v = (await get('dennis', 'taskListVersion', { id: listA })).data.version;
+  assert.equal((await call('dennis', 'moveTaskToList', { id: ids2.buy, toListId: listB })).status, 200);
+  assert.ok((await get('dennis', 'taskListVersion', { id: listA })).data.version > v, 'the old list refreshes too');
+  const a = await tasksOf('dennis', listA);
+  assert.deepEqual(a.map(t => t.What), ['Fix the gutter']);
+  const b = await tasksOf('dennis', listB);
+  const moved = b.find(t => t.Id === ids2.buy);
+  assert.deepEqual([moved.Depth, moved.ParentId], [0, null]);
+  const kid = b.find(t => t.Id === ids2.size);
+  assert.deepEqual([kid.Depth, kid.Complete], [1, true]);
+  const top = b.filter(t => t.Depth === 0).sort((x, y) => x.SortOrder - y.SortOrder).map(t => t.What);
+  assert.deepEqual(top, ['Fix the gutter', 'Buy brackets'], 'goes to the bottom');
+  assert.equal((await call('dennis', 'moveTaskToList', { id: ids2.buy, toListId: listB })).status, 400, 'already there');
+});
+
+await test('move/copy only to lists you can reach', async () => {
+  assert.equal((await call('dennis', 'moveTaskToList', { id: ids2.gutter, toListId: 999999 })).status, 404);
+  const karens = (await call('karen', 'addTaskList', { name: 'Karen only' })).data.id;
+  assert.equal((await call('dennis', 'moveTaskToList', { id: ids2.gutter, toListId: karens })).status, 404);
+  assert.equal((await call('karen', 'moveTaskToList', { id: ids2.gutter, toListId: karens, copy: true })).status, 404);
+});
+
+await test('add to Plan: needs a time; lands on my Plan with place, contact and notes; no double-adding', async () => {
+  assert.equal((await call('dennis', 'addTaskToPlan', { id: ids2.gutter, date: '2026-12-03', time: '' })).status, 400);
+  const r = await call('dennis', 'addTaskToPlan', { id: ids2.gutter, date: '2026-12-03', time: '10:00', endTime: '11:30' });
+  assert.equal(r.status, 200);
+  const ev = (await get('dennis', 'plannedEvents', { status: 'Planned' })).data.events.find(e => e.Id === r.data.eventId);
+  assert.equal(ev.Title, 'Fix the gutter');
+  assert.equal(ev.StartDateTime, '2026-12-03 10:00:00');
+  assert.equal(ev.EndDateTime, '2026-12-03 11:30:00');
+  assert.equal(ev.LocationName, 'Back of the house');
+  assert.match(ev.Notes, /Contact: Bob Roofer \(555\) 123-4567 x12/);
+  assert.match(ev.Notes, /Ladder in garage/);
+  assert.match(ev.Notes, /From task list: House/);
+  assert.equal((await call('dennis', 'addTaskToPlan', { id: ids2.gutter, date: '2026-12-03', time: '10:00' })).status, 409);
+  // A second event at the same place reuses the saved location instead of making another.
+  const r2 = await call('dennis', 'addTaskToPlan', { id: ids2.gutter, date: '2026-12-10', time: '10:00' });
+  const ev2 = (await get('dennis', 'plannedEvents', { status: 'Planned' })).data.events.find(e => e.Id === r2.data.eventId);
+  assert.equal(ev2.LocationId, ev.LocationId);
+  assert.equal((await call('karen', 'addTaskToPlan', { id: ids2.gutter, date: '2026-12-03', time: '10:00' })).status, 404, 'not shared with Karen');
+});
+
 for (const [s, n, m] of results) { console.log(`${s}  ${n}${m ? ' — ' + m : ''}`); }
 const failed = results.filter(r => r[0] === 'FAIL').length;
 console.log(`\n${results.length - failed} passed, ${failed} failed`);
