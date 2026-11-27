@@ -243,3 +243,17 @@ database they need.
 2. Upload `api/tasks.php` (replace) to `seniorfamily.org/life-tempo-api/`.
    `api/api.php` is unchanged since the Tasks update.
 3. Push the front end (`tasks.html`).
+
+## Logging for another day (2026-11-27)
+
+The Today page has a **Logging for** date (today by default). Picking another
+day, either there or in the form's Date, keeps Quick Log, new entries and that
+day's type on that day until **Back to today** is chosen or the tab or browser
+is closed. The day is kept in sessionStorage, so it survives a page reload.
+
+1. Upload `api/api.php` (replace). `quickLog` now takes an optional `date`. No
+   database change.
+2. Push the front end (`index.html`).
+
+Test: `tests/ui-today.mjs` (10 browser steps, same throwaway database as
+`tests/tasks.test.mjs`).

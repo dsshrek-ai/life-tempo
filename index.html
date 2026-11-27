@@ -5,6 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Today | Life Tempo</title>
 <link rel="stylesheet" href="style.css?v=20261104">
+<style>
+  .day-card.other-day { border-left: 5px solid var(--amber); background: #fdf5ea; }
+  .day-card #log-day-label { font-weight: 600; }
+  .quick-day { font-weight: normal; font-size: 0.9em; }
+</style>
 </head>
 <body>
 
@@ -70,6 +75,28 @@ function entryHasDetails(entry) {
     (entry.PersonIds && entry.PersonIds.length) || (entry.TagIds && entry.TagIds.length));
 }
 let DAY_STATUS = { DayType: 'Home' };
+let DAY_ENTRIES = [];
+
+// The day being logged. Defaults to today; once another day is picked it
+// sticks (sessionStorage) until "Back to today" or the tab/browser closes.
+const LOG_DAY_KEY = 'lt.logDay';
+function logDay() {
+  let d = null;
+  try { d = sessionStorage.getItem(LOG_DAY_KEY); } catch (e) { /* storage blocked */ }
+  return d && /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : todayStr();
+}
+function isLoggingToday() { return logDay() === todayStr(); }
+function setLogDay(d) {
+  try {
+    if (!d || d === todayStr()) sessionStorage.removeItem(LOG_DAY_KEY);
+    else sessionStorage.setItem(LOG_DAY_KEY, d);
+  } catch (e) { /* storage blocked -- the day just won't survive a reload */ }
+}
+function logDayLabel() {
+  if (isLoggingToday()) return 'Today';
+  const [y, m, d] = logDay().split('-').map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+}
 let PREFS = { ShowTravel: true, ShowBillable: true };
 
 const DAY_TYPES = ['Home', 'Local Outing', 'Travel', 'Vacation', 'Sick', 'Special Event'];
@@ -93,32 +120,82 @@ function formatUpcomingWhen(startDateTime) {
   return `${heading} · ${formatTime12h(startDateTime)}`;
 }
 
-function renderShell(todayEntries) {
+// The "Logging for" day picker and that day's type (Home, Travel, ...).
+function renderDayCard() {
+  const card = document.getElementById('day-card');
+  const today = isLoggingToday();
+  card.classList.toggle('other-day', !today);
+  card.innerHTML = `
+    <div style="display:flex; align-items:center; gap:0.6rem; flex-wrap:wrap;">
+      <label for="log-day" style="margin:0;"><strong>Logging for:</strong></label>
+      <input type="date" id="log-day" value="${logDay()}" style="width:auto;">
+      <span id="log-day-label">${escapeHtml(logDayLabel())}</span>
+      ${today ? '' : '<button type="button" class="btn secondary" id="log-day-today">Back to today</button>'}
+    </div>
+    ${today ? '' : '<p class="note" style="margin-top:0.6rem;">Quick Log and new entries go on this day until you choose Back to today or close Life Tempo.</p>'}
+    <div style="display:flex; align-items:center; gap:0.6rem; flex-wrap:wrap; margin-top:0.6rem;">
+      <strong>${today ? 'Today is a:' : 'That day was a:'}</strong>
+      <select id="day-type">${DAY_TYPES.map(t => `<option value="${t}" ${t === DAY_STATUS.DayType ? 'selected' : ''}>${t}</option>`).join('')}</select>
+      <button type="button" class="btn secondary" id="day-save">Save</button>
+    </div>
+    <p class="note" style="margin-top:0.6rem;">Travel/Vacation/Sick days won't count against Daily-cadence goals like practice or exercise (see Dashboard).</p>`;
+  document.getElementById('day-save').addEventListener('click', onSaveDayStatus);
+  document.getElementById('log-day').addEventListener('change', e => changeLogDay(e.target.value));
+  const back = document.getElementById('log-day-today');
+  if (back) back.addEventListener('click', () => changeLogDay(todayStr()));
+}
+
+function renderQuickCard() {
+  const card = document.getElementById('quick-card');
   const quickLogActivities = activeActivities().filter(a => a.QuickLog);
-  // Today's total minutes per activity (quick and manual entries alike),
+  card.style.display = quickLogActivities.length ? '' : 'none';
+  if (!quickLogActivities.length) { card.innerHTML = ''; return; }
+  // The day's total minutes per activity (quick and manual entries alike),
   // shown on each Quick Log button; the ✓ only appears once something has
-  // been logged for that activity today.
+  // been logged for that activity on that day.
   const minutesToday = {};
   const loggedToday = new Set();
-  todayEntries.forEach(e => {
+  DAY_ENTRIES.forEach(e => {
     loggedToday.add(e.ActivityId);
     if (e.DurationMinutes) minutesToday[e.ActivityId] = (minutesToday[e.ActivityId] || 0) + e.DurationMinutes;
   });
+  card.innerHTML = `
+    <h3>Quick Log${isLoggingToday() ? '' : ` <span class="quick-day">— ${escapeHtml(logDayLabel())}</span>`}</h3>
+    <div class="quick-log-strip">
+      ${quickLogActivities.map(a => {
+        const mins = minutesToday[a.Id] || 0;
+        return `<button type="button" class="btn accent" data-quick="${a.Id}">${escapeHtml(a.Name)}${loggedToday.has(a.Id) ? ' ✓' : ''}${mins ? ` <span class="quick-mins">· ${mins} min</span>` : ''}</button>`;
+      }).join('')}
+    </div>`;
+  card.querySelectorAll('[data-quick]').forEach(btn => {
+    btn.addEventListener('click', () => quickLog(Number(btn.dataset.quick), btn));
+  });
+}
 
+// Everything that depends on the logged day, without touching the form
+// (so a half-filled entry survives a day change).
+function renderDayParts() {
+  renderDayCard();
+  renderQuickCard();
+  document.getElementById('day-list-heading').textContent = isLoggingToday() ? 'Today' : logDayLabel();
+  renderTodayList(DAY_ENTRIES);
+}
+
+async function changeLogDay(d) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d || '')) d = todayStr();
+  setLogDay(d);
+  if (!editingId) document.getElementById('f-date').value = logDay();
+  await refreshDay();
+}
+
+function renderShell() {
   contentEl.innerHTML = `
     ${ACTIVITIES.length === 0 ? `
       <div class="note">
         No activities yet — add one on <a href="manage.html">Manage</a> before you can log anything.
       </div>` : ''}
 
-    <div class="card">
-      <div style="display:flex; align-items:center; gap:0.6rem; flex-wrap:wrap;">
-        <strong>Today is a:</strong>
-        <select id="day-type">${DAY_TYPES.map(t => `<option value="${t}" ${t === DAY_STATUS.DayType ? 'selected' : ''}>${t}</option>`).join('')}</select>
-        <button type="button" class="btn secondary" id="day-save">Save</button>
-      </div>
-      <p class="note" style="margin-top:0.6rem;">Travel/Vacation/Sick days won't count against Daily-cadence goals like practice or exercise (see Dashboard).</p>
-    </div>
+    <div class="card day-card" id="day-card"></div>
 
     ${UPCOMING.length ? `
       <div class="card">
@@ -133,16 +210,7 @@ function renderShell(todayEntries) {
         <p><a href="plan.html">See all planned events →</a></p>
       </div>` : ''}
 
-    ${quickLogActivities.length ? `
-      <div class="card">
-        <h3>Quick Log</h3>
-        <div class="quick-log-strip">
-          ${quickLogActivities.map(a => {
-            const mins = minutesToday[a.Id] || 0;
-            return `<button type="button" class="btn accent" data-quick="${a.Id}">${escapeHtml(a.Name)}${loggedToday.has(a.Id) ? ' ✓' : ''}${mins ? ` <span class="quick-mins">· ${mins} min</span>` : ''}</button>`;
-          }).join('')}
-        </div>
-      </div>` : ''}
+    <div class="card" id="quick-card"></div>
 
     <div class="card">
       <h3 id="form-heading">Log an Activity</h3>
@@ -157,7 +225,7 @@ function renderShell(todayEntries) {
         <div class="form-grid">
           <div>
             <label for="f-date">Date</label>
-            <input type="date" id="f-date" value="${todayStr()}">
+            <input type="date" id="f-date" value="${logDay()}">
           </div>
           <div>
             <label for="f-start">Start time</label>
@@ -251,26 +319,27 @@ function renderShell(todayEntries) {
     </div>
 
     <div class="card">
-      <h3>Today</h3>
+      <h3 id="day-list-heading">Today</h3>
       <div id="today-list"></div>
     </div>
   `;
 
   document.getElementById('f-more-toggle').addEventListener('click', () => setDetailsOpen(!detailsOpen));
-  contentEl.querySelectorAll('[data-quick]').forEach(btn => {
-    btn.addEventListener('click', () => quickLog(Number(btn.dataset.quick), btn));
+  // Picking a date on a new entry makes that the logged day too, so the
+  // next entry starts there as well.
+  document.getElementById('f-date').addEventListener('change', e => {
+    if (!editingId && e.target.value && e.target.value !== logDay()) changeLogDay(e.target.value);
   });
 
   document.getElementById('f-activity').addEventListener('change', onActivityPicked);
   document.getElementById('log-form').addEventListener('submit', onSubmit);
   document.getElementById('f-cancel').addEventListener('click', resetForm);
-  document.getElementById('day-save').addEventListener('click', onSaveDayStatus);
   if (PREFS.ShowBillable) {
     document.getElementById('f-client').addEventListener('change', updateRateHint);
     updateRateHint();
   }
 
-  renderTodayList(todayEntries);
+  renderDayParts();
 }
 
 // Shows the selected client's rate (if any) with a button that fills Cost
@@ -327,7 +396,7 @@ function renderTodayList(entries) {
   const list = document.getElementById('today-list');
   list.innerHTML = '';
   if (!entries.length) {
-    list.innerHTML = '<p class="note">Nothing logged yet today.</p>';
+    list.innerHTML = `<p class="note">Nothing logged yet ${isLoggingToday() ? 'today' : 'for this day'}.</p>`;
     return;
   }
   // One row per activity: an activity logged several times (e.g. four
@@ -419,7 +488,7 @@ function resetForm() {
   document.getElementById('form-heading').textContent = 'Log an Activity';
   document.getElementById('log-form').reset();
   document.getElementById('f-id').value = '';
-  document.getElementById('f-date').value = todayStr();
+  document.getElementById('f-date').value = logDay();
   document.getElementById('f-cancel').style.display = 'none';
   if (PREFS.ShowBillable) updateRateHint();
 }
@@ -428,7 +497,7 @@ async function confirmDelete(entry) {
   if (!confirm(`Delete this "${entry.ActivityName}" entry? This cannot be undone.`)) return;
   try {
     await postAction('deleteActivityLog', { id: entry.Id });
-    await loadToday();
+    await refreshDay();
   } catch (e) {
     showStatus("Couldn't delete that entry. Try again.");
   }
@@ -440,7 +509,7 @@ async function onSubmit(ev) {
   if (!activityId) { showStatus('Choose an activity first.'); return; }
   const payload = {
     activityId,
-    activityDate: document.getElementById('f-date').value || todayStr(),
+    activityDate: document.getElementById('f-date').value || logDay(),
     startTime: document.getElementById('f-start').value,
     endTime: document.getElementById('f-end').value,
     durationMinutes: document.getElementById('f-duration').value,
@@ -468,7 +537,7 @@ async function onSubmit(ev) {
       showStatus('Logged.');
     }
     resetForm();
-    await loadToday();
+    await refreshDay();
   } catch (e) {
     showStatus("Couldn't save that entry. Try again.");
   }
@@ -481,7 +550,7 @@ async function onSaveDayStatus() {
   btn.disabled = true;
   showStatus('');
   try {
-    await postAction('setDayStatus', { date: todayStr(), dayType });
+    await postAction('setDayStatus', { date: logDay(), dayType });
     DAY_STATUS.DayType = dayType;
     showStatus('Day status saved.');
   } catch (e) {
@@ -494,25 +563,31 @@ async function quickLog(activityId, btn) {
   btn.disabled = true;
   showStatus('');
   try {
-    const res = await postAction('quickLog', { activityId });
-    showStatus(`Logged ${res.activityName}.`);
-    await loadToday();
+    const res = await postAction('quickLog', { activityId, date: logDay() });
+    showStatus(`Logged ${res.activityName}${isLoggingToday() ? '' : ` for ${logDayLabel()}`}.`);
+    await refreshDay();
   } catch (e) {
     showStatus("Couldn't quick-log that. Try again.");
   }
   btn.disabled = false;
 }
 
-async function loadToday() {
-  const today = todayStr();
-  const res = await fetchData('activityLog', { from: today, to: today });
-  renderShell((res && res.entries) || []);
+// Reloads the logged day's entries and day type, then redraws the parts that
+// depend on them (the form is left alone).
+async function refreshDay() {
+  const day = logDay();
+  const [res, dayRes] = await Promise.all([
+    fetchData('activityLog', { from: day, to: day }), fetchData('dayStatus', { date: day }),
+  ]);
+  DAY_ENTRIES = (res && res.entries) || [];
+  DAY_STATUS = dayRes || { DayType: 'Home' };
+  renderDayParts();
 }
 
 async function load() {
   try {
     const [actRes, locRes, dayRes, personRes, tagRes, lpRes, evRes, clientRes, prefs] = await Promise.all([
-      fetchData('activities'), fetchData('locations'), fetchData('dayStatus'),
+      fetchData('activities'), fetchData('locations'), fetchData('dayStatus', { date: logDay() }),
       fetchData('people'), fetchData('tags'), fetchData('learningProjects'),
       fetchData('plannedEvents', { status: 'Planned', shared: 1 }), fetchData('clients'), loadPreferences(),
     ]);
@@ -527,7 +602,10 @@ async function load() {
     applyNavVisibility(PREFS);
     UPCOMING = ((evRes && evRes.events) || []).filter(e => e.StartDateTime >= nowDateTimeStr());
     UPCOMING_COLORS = planColorMap(UPCOMING);
-    await loadToday();
+    const day = logDay();
+    const res = await fetchData('activityLog', { from: day, to: day });
+    DAY_ENTRIES = (res && res.entries) || [];
+    renderShell();
   } catch (e) {
     handleError(contentEl, e);
   }

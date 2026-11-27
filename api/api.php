@@ -576,7 +576,7 @@ function deleteActivityLog(int $userId, int $id): void {
   $stmt->close();
 }
 
-function quickLogActivity(int $userId, int $activityId): array {
+function quickLogActivity(int $userId, int $activityId, ?string $date = null): array {
   $stmt = db()->prepare(
     'SELECT id, name, typical_duration_minutes, productive, billable_eligible, default_location_id
      FROM lt_activities WHERE id = ? AND user_id = ? AND active = 1'
@@ -594,9 +594,9 @@ function quickLogActivity(int $userId, int $activityId): array {
 
   $ins = db()->prepare(
     'INSERT INTO lt_activity_log (user_id, activity_id, activity_date, duration_minutes, location_id, productive, billable)
-     VALUES (?, ?, CURDATE(), ?, ?, ?, ?)'
+     VALUES (?, ?, COALESCE(?, CURDATE()), ?, ?, ?, ?)'
   );
-  $ins->bind_param('iiiiii', $userId, $activityId, $duration, $locationId, $productive, $billable);
+  $ins->bind_param('iisiiii', $userId, $activityId, $date, $duration, $locationId, $productive, $billable);
   $ins->execute();
   $id = $ins->insert_id;
   $ins->close();
@@ -2401,7 +2401,14 @@ switch ($action) {
     $user = requireMember();
     $activityId = (int)($body['activityId'] ?? 0);
     if ($activityId <= 0) { fail('Missing activity id'); }
-    $result = quickLogActivity((int)$user['id'], $activityId);
+    // Optional day (the Today page's "Logging for" day); blank means today.
+    $date = trim((string)($body['date'] ?? ''));
+    if ($date === '') {
+      $date = null;
+    } elseif (!preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $date, $m) || !checkdate((int)$m[2], (int)$m[3], (int)$m[1])) {
+      fail('Invalid date');
+    }
+    $result = quickLogActivity((int)$user['id'], $activityId, $date);
     respond(['ok' => true, 'id' => $result['id'], 'activityName' => $result['activityName']]);
   }
 
